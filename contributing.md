@@ -1,6 +1,10 @@
 你好呀，太空奶牛人 🤠🌌
 
-RustScan 一直在寻找贡献者。无论是拼写错误还是重大改动，我们都**需要**并欢迎你的帮助。
+> **关于 RustScanX**：本项目是基于原开源项目 [RustScan](https://github.com/bee-san/RustScan.git)
+> 二次开发而来的分支，并向原项目及其贡献者致敬。下文中涉及上游 issue 标签、
+> Wiki 与仓库链接的部分，均指向**原项目**。
+
+RustScanX 一直在寻找贡献者。无论是拼写错误还是重大改动，我们都**需要**并欢迎你的帮助。
 
 在贡献之前，请先阅读我们的[行为准则](https://github.com/RustScan/RustScan/blob/master/CODE_OF_CONDUCT.md)。
 
@@ -25,7 +29,7 @@ RustScan 有 2 个你应该关注的 GitHub issue 主要标签：
 
 然后在对应的 issue 下评论说明你已经完成。
 
-RustScan 的代码里还有一些 `// TODO`，这些更多是为核心团队准备的，但如果有人愿意帮忙处理这些 issue，我们也不会拒绝。
+RustScanX 的代码里还有一些 `// TODO`，这些更多是为核心团队准备的，但如果有人愿意帮忙处理这些 issue，我们也不会拒绝。
 
 如果你有任何功能建议或发现 bug，请留下一个 GitHub issue。我们欢迎一切支持 :D
 
@@ -35,7 +39,7 @@ RustScan 的代码里还有一些 `// TODO`，这些更多是为核心团队准�
 
 ## 搭建开发环境
 
-为了让向 RustScan 贡献更轻松，你可以使用 `contributing.Dockerfile` 来构建一个已经可以编译和试玩 RustScan 的 Docker 镜像。
+为了让向 RustScanX 贡献更轻松，你可以使用 `contributing.Dockerfile` 来构建一个已经可以编译和试玩 RustScanX 的 Docker 镜像。
 要构建它，你只需要运行：
 
 ```bash

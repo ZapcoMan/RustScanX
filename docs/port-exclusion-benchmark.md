@@ -104,5 +104,5 @@ oracle 进行对比，覆盖空输入、端点 0/65535、重复端口/排除项�
 
 这使用了 XNU 的 [TCP 预算初始化](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/netinet/tcp_subr.c)
 和 [内存记账接口](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/mem_acct_private.h)。
-它改变的是可丢弃的基准测试环境，而不是 RustScan 的行为
+它改变的是可丢弃的基准测试环境，而不是 RustScanX 的行为
 或用户机器上的操作系统配置。

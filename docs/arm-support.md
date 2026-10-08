@@ -1,6 +1,9 @@
 # ARM 支持
 
-本页介绍 RustScan 的 CI 会构建和测试哪些 ARM 目标，以及如何自行构建 ARM 二进制文件。
+> 本页属于 **RustScanX**——一个基于原项目 [RustScan](https://github.com/bee-san/RustScan.git)
+> 二次开发并向其致敬的分支。
+
+本页介绍 RustScanX 的 CI 会构建和测试哪些 ARM 目标，以及如何自行构建 ARM 二进制文件。
 
 ## CI 覆盖范围
 
@@ -24,7 +27,7 @@ cross build --locked --release --target aarch64-unknown-linux-gnu
 cross build --locked --release --target armv7-unknown-linux-gnueabihf
 ```
 
-生成的二进制文件位于 `target/<target>/release/rustscan`。
+生成的二进制文件位于 `target/<target>/release/rustscanx`。
 
 在 ARM 机器上（例如运行 64 位系统的 Raspberry Pi，或 Apple Silicon Mac）你不需要 `cross`；普通的原生构建即可工作：
 
