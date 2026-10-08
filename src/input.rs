@@ -1,0 +1,827 @@
+//! 提供了一种读取、解析并保存扫描配置选项的方式。
+use clap::parser::ValueSource;
+use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
+use serde_derive::Deserialize;
+use std::collections::HashSet;
+use std::ffi::OsString;
+use std::fs;
+use std::path::PathBuf;
+
+const LOWEST_PORT_NUMBER: u16 = 1;
+const TOP_PORT_NUMBER: u16 = 65535;
+
+/// 表示端口扫描将如何运行。
+///   - Serial 会从起点一直运行到终点，例如 1 到 1_000。
+///   - Random 会随机化端口被扫描的顺序。
+#[derive(Deserialize, Debug, ValueEnum, Clone, Copy, PartialEq, Eq)]
+pub enum ScanOrder {
+    Serial,
+    Random,
+}
+
+/// 表示 scripts 的取值。
+///   - none 会避免运行任何脚本，只显示端口扫描结果。
+///   - default 会运行默认内嵌的 nmap 脚本，它从一开始就是 RustScan 的一部分。
+///   - custom 会读取 ScriptConfig 文件以及预定义文件夹中可用的脚本
+#[derive(Deserialize, Debug, ValueEnum, Clone, PartialEq, Eq, Copy)]
+pub enum ScriptsRequired {
+    None,
+    Default,
+    Custom,
+}
+
+/// 要扫描的端口范围，以闭区间 `(start, end)` 对表示。
+///
+/// 从 `-r/--range`（例如 `1-500,1000-2500`）以及配置文件的 `range`
+/// 键解析而来。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortRanges(pub Vec<(u16, u16)>);
+
+/// 配置文件中 `range` 可接受的写法。
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PortRangesConfig {
+    /// `range = { start = 1, end = 1000 }`：在支持多范围之前使用的格式，
+    /// 保留它是为了让现有的配置文件仍能工作。
+    Single { start: u16, end: u16 },
+    /// `range = "1-500,1000-2500"`：与 `--range` 相同的语法。
+    Text(String),
+    /// `range = [[1, 500], [1000, 2500]]`.
+    Pairs(Vec<(u16, u16)>),
+}
+
+impl<'de> serde::Deserialize<'de> for PortRanges {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let pairs = match PortRangesConfig::deserialize(deserializer)? {
+            PortRangesConfig::Single { start, end } => vec![(start, end)],
+            PortRangesConfig::Text(text) => {
+                return parse_ranges(&text).map_err(serde::de::Error::custom)
+            }
+            PortRangesConfig::Pairs(pairs) => pairs,
+        };
+
+        if pairs.is_empty() {
+            return Err(serde::de::Error::custom("expected at least one port range"));
+        }
+        if let Some(&(start, end)) = pairs.iter().find(|&&(start, end)| start > end) {
+            return Err(serde::de::Error::custom(format!(
+                "invalid port range {start}-{end}: start must not be greater than end"
+            )));
+        }
+
+        Ok(PortRanges(pairs))
+    }
+}
+
+#[cfg(not(tarpaulin_include))]
+/// 将单个 `start-end` 记号（例如 "100-200"）解析为 `(start, end)`。
+/// 当记号格式错误、无法解析为 `u16`，或 `start > end` 时返回 `None`。
+fn parse_range(input: &str) -> Option<(u16, u16)> {
+    let mut parts = input.trim().splitn(2, '-').map(str::trim);
+    let a = parts.next()?;
+    let b = parts.next()?;
+
+    let start = a.parse::<u16>().ok()?;
+    let end = b.parse::<u16>().ok()?;
+
+    if start <= end {
+        Some((start, end))
+    } else {
+        None
+    }
+}
+#[cfg(not(tarpaulin_include))]
+/// 将以逗号分隔的 `start-end` 范围列表解析为 `PortRanges`。
+///
+/// 出错时返回一条能指出问题记号的有用消息。
+fn parse_ranges(input: &str) -> Result<PortRanges, String> {
+    let s = input.trim();
+    if s.is_empty() {
+        return Err("empty input: expected one or more comma-separated 'start-end' pairs".into());
+    }
+
+    let ranges_res: Result<Vec<(u16, u16)>, String> = s
+        .split(',')
+        .map(|token| {
+            let t = token.trim();
+            parse_range(t).ok_or_else(|| {
+                format!(
+                    "invalid range token `{}` — expected `start-end` with 0 <= start <= end <= 65535",
+                    t
+                )
+            })
+        })
+        .collect();
+
+    ranges_res.map(PortRanges)
+}
+
+#[derive(Parser, Debug, Clone)]
+#[command(
+    name = "rustscanx",
+    version = env!("CARGO_PKG_VERSION"),
+    max_term_width = 120,
+    help_template = "{bin} {version}\n{about}\n\nUSAGE:\n    {usage}\n\nOPTIONS:\n{options}",
+)]
+#[allow(clippy::struct_excessive_bools)]
+/// Fast Port Scanner built in Rust.
+/// WARNING Do not use this program against sensitive infrastructure since the
+/// specified server may not be able to handle this many socket connections at once.
+/// - Discord  <http://discord.skerritt.blog>
+/// - GitHub <https://github.com/RustScan/RustScan>
+pub struct Opts {
+    /// A comma-delimited list or newline-delimited file of separated CIDRs, IPs, or hosts to be scanned.
+    #[arg(short, long, value_delimiter = ',')]
+    pub addresses: Vec<String>,
+
+    /// A list of comma separated ports to be scanned. Example: 80,443,8080.
+    #[arg(short, long, value_delimiter = ',')]
+    pub ports: Option<Vec<u16>>,
+
+    /// Ranges of ports as comma-separated start-end pairs. Example: 1-500,1000-2500,4000-7000
+    #[arg(short, long, conflicts_with = "ports", value_parser = parse_ranges)]
+    pub range: Option<PortRanges>,
+
+    /// Whether to ignore the configuration file or not.
+    #[arg(short, long)]
+    pub no_config: bool,
+
+    /// Hide the banner
+    #[arg(long)]
+    pub no_banner: bool,
+
+    /// Custom path to config file
+    #[arg(short, long, value_parser)]
+    pub config_path: Option<PathBuf>,
+
+    /// Greppable mode. Only output the ports. No Nmap. Useful for grep or outputting to a file.
+    #[arg(short, long)]
+    pub greppable: bool,
+
+    /// Accessible mode. Turns off features which negatively affect screen readers.
+    #[arg(long)]
+    pub accessible: bool,
+
+    /// A comma-delimited list or file of DNS resolvers.
+    #[arg(long)]
+    pub resolver: Option<String>,
+
+    /// The batch size for port scanning, it increases or slows the speed of
+    /// scanning. Depends on the open file limit of your OS.  If you do 65535
+    /// it will do every port at the same time. Although, your OS may not
+    /// support this.
+    #[arg(short, long, default_value = "4500")]
+    pub batch_size: usize,
+
+    /// The timeout in milliseconds before a port is assumed to be closed.
+    #[arg(short, long, default_value = "1500")]
+    pub timeout: u32,
+
+    /// The number of tries before a port is assumed to be closed.
+    /// If set to 0, rustscanx will correct it to 1.
+    #[arg(long, default_value = "1")]
+    pub tries: u8,
+
+    /// Automatically increases the Unix file-descriptor limit.
+    #[cfg_attr(not(unix), arg(hide = true))]
+    #[arg(short, long)]
+    pub ulimit: Option<usize>,
+
+    /// The order of scanning to be performed. The "serial" option will
+    /// scan ports in ascending order while the "random" option will scan
+    /// ports randomly.
+    #[arg(long, value_enum, ignore_case = true, default_value = "serial")]
+    pub scan_order: ScanOrder,
+
+    /// Level of scripting required for the run.
+    #[arg(long, value_enum, ignore_case = true, default_value = "default")]
+    pub scripts: ScriptsRequired,
+
+    /// Use the top 1000 ports.
+    #[arg(long)]
+    pub top: bool,
+
+    /// The Script arguments to run.
+    /// To use the argument -A, end RustScan's args with '-- -A'.
+    /// Example: 'rustscanx -t 1500 -a 127.0.0.1 -- -A -sC'.
+    /// This command adds -Pn -vvv -p $PORTS automatically to nmap.
+    /// For things like --script '(safe and vuln)' enclose it in quotations marks \"'(safe and vuln)'\"
+    #[arg(last = true)]
+    pub command: Vec<String>,
+
+    /// A list of comma separated ports to be excluded from scanning. Example: 80,443,8080.
+    #[arg(short, long, value_delimiter = ',')]
+    pub exclude_ports: Option<Vec<u16>>,
+
+    /// A list of comma separated CIDRs, IPs, or hosts to be excluded from scanning.
+    #[arg(short = 'x', long = "exclude-addresses", value_delimiter = ',')]
+    pub exclude_addresses: Option<Vec<String>>,
+
+    /// UDP scanning mode, finds UDP ports that send back responses
+    #[arg(long)]
+    pub udp: bool,
+
+    /// Also list TCP ports that actively refused the connection (closed).
+    /// Closed ports are only printed; scripts are never run against them.
+    #[arg(long)]
+    pub closed: bool,
+
+    /// Milliseconds to wait after scanning a port (on every address) before
+    /// scanning the next one, for slow, low-noise scans. 0 disables the delay.
+    #[arg(long, default_value = "0", value_name = "MS")]
+    pub interval: u64,
+
+    /// 在命令行上显式给出的选项的 id。配置
+    /// 文件永远不会覆盖这些选项（参见 [`Opts::merge`]）。
+    #[arg(skip)]
+    pub cli_args: HashSet<String>,
+}
+
+#[cfg(not(tarpaulin_include))]
+impl Opts {
+    pub fn read() -> Self {
+        Self::try_read_from(std::env::args_os()).unwrap_or_else(|e| e.exit())
+    }
+
+    /// 像 [`Opts::read`] 那样解析 `args`，返回错误而不是
+    /// 直接退出。
+    fn try_read_from<I, T>(args: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let mut command = Self::command();
+        let mut matches = command.try_get_matches_from_mut(args)?;
+
+        // clap 会填入默认值，因此仅凭解析后的结构体无法
+        // 区分 `-b 4500` 和完全没有 `-b`。记录下用户
+        // 实际输入的内容，好让 `merge` 让它优先于配置文件。
+        let cli_args = command
+            .get_arguments()
+            .map(|arg| arg.get_id().as_str())
+            .filter(|id| matches.value_source(id) == Some(ValueSource::CommandLine))
+            .map(str::to_owned)
+            .collect();
+
+        let mut opts =
+            Self::from_arg_matches_mut(&mut matches).map_err(|e| e.format(&mut command))?;
+        opts.cli_args = cli_args;
+
+        if opts.ports.is_none() && opts.range.is_none() {
+            opts.range = Some(PortRanges(vec![(LOWEST_PORT_NUMBER, TOP_PORT_NUMBER)]));
+        }
+
+        Ok(opts)
+    }
+
+    /// 校验那些可用性或者语义依赖于操作系统的选项。
+    ///
+    /// # 错误
+    ///
+    /// 当某个选项在当前平台上不受支持时返回一个错误。
+    pub fn validate_platform(&self) -> Result<(), String> {
+        #[cfg(not(unix))]
+        {
+            if self.ulimit.is_some() {
+                return Err(
+                    "--ulimit is only supported on Unix-like operating systems. \
+                     On Windows, use --batch-size (-b) to control scan concurrency."
+                        .to_owned(),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 读取命令行参数到一个 Opts 结构体，并合并
+    /// 在用户配置文件中找到的值。在命令行上给出的选项优先于配置文件。
+    pub fn merge(&mut self, config: &Config) {
+        if !self.no_config {
+            self.merge_required(config);
+            self.merge_optional(config);
+        }
+    }
+
+    fn merge_required(&mut self, config: &Config) {
+        macro_rules! merge_required {
+            ($($field: ident),+) => {
+                $(
+                    if let Some(e) = &config.$field {
+                        if !self.cli_args.contains(stringify!($field)) {
+                            self.$field = e.clone();
+                        }
+                    }
+                )+
+            }
+        }
+
+        merge_required!(
+            addresses, greppable, accessible, batch_size, timeout, tries, scan_order, scripts,
+            command, udp, no_banner, closed, interval
+        );
+    }
+
+    fn merge_optional(&mut self, config: &Config) {
+        macro_rules! merge_optional {
+            ($($field: ident),+) => {
+                $(
+                    if config.$field.is_some() && !self.cli_args.contains(stringify!($field)) {
+                        self.$field = config.$field.clone();
+                    }
+                )+
+            }
+        }
+
+        // 只有在用户请求时才使用 top ports
+        if self.top && config.ports.is_some() {
+            self.ports = config.ports.clone();
+        }
+
+        merge_optional!(range, resolver, ulimit, exclude_ports, exclude_addresses);
+    }
+}
+
+impl Default for Opts {
+    fn default() -> Self {
+        Self {
+            addresses: vec![],
+            ports: None,
+            range: None,
+            greppable: true,
+            batch_size: 0,
+            timeout: 0,
+            tries: 0,
+            ulimit: None,
+            command: vec![],
+            accessible: false,
+            resolver: None,
+            scan_order: ScanOrder::Serial,
+            no_config: true,
+            no_banner: false,
+            top: false,
+            scripts: ScriptsRequired::Default,
+            config_path: None,
+            exclude_ports: None,
+            exclude_addresses: None,
+            udp: false,
+            closed: false,
+            interval: 0,
+            cli_args: HashSet::new(),
+        }
+    }
+}
+
+/// 用于反序列化我们在配置文件中指定选项的结构体。
+/// 这些选项会进一步与我们的命令行参数合并，以
+/// 生成最终的 Opts 结构体。
+#[cfg(not(tarpaulin_include))]
+#[derive(Debug, Deserialize)]
+pub struct Config {
+    addresses: Option<Vec<String>>,
+    ports: Option<Vec<u16>>,
+    range: Option<PortRanges>,
+    greppable: Option<bool>,
+    accessible: Option<bool>,
+    batch_size: Option<usize>,
+    timeout: Option<u32>,
+    tries: Option<u8>,
+    ulimit: Option<usize>,
+    resolver: Option<String>,
+    scan_order: Option<ScanOrder>,
+    command: Option<Vec<String>>,
+    scripts: Option<ScriptsRequired>,
+    exclude_ports: Option<Vec<u16>>,
+    exclude_addresses: Option<Vec<String>>,
+    udp: Option<bool>,
+    no_banner: Option<bool>,
+    closed: Option<bool>,
+    interval: Option<u64>,
+}
+
+#[cfg(not(tarpaulin_include))]
+#[allow(clippy::doc_link_with_quotes)]
+#[allow(clippy::manual_unwrap_or_default)]
+impl Config {
+    /// 读取 TOML 格式的配置文件并将其解析为一个
+    /// Config 结构体。
+    ///
+    /// # 格式
+    ///
+    /// addresses = ["127.0.0.1", "127.0.0.1"]
+    /// ports = [80, 443, 8080]
+    /// greppable = true
+    /// scan_order = "Serial"
+    /// exclude_ports = [8080, 9090, 80]
+    /// udp = false
+    /// closed = false
+    /// interval = 0
+    ///
+    pub fn read(custom_config_path: Option<PathBuf>) -> Self {
+        let mut content = String::new();
+        let config_path = custom_config_path.unwrap_or_else(|| {
+            // 先尝试符合 XDG 惯例的位置，然后回退到遗留
+            // 路径，以便现有用户保持不变地继续使用。
+            for path in [
+                default_config_path(),
+                legacy_dot_config_path(),
+                old_default_config_path(),
+            ] {
+                if path.exists() {
+                    return path;
+                }
+            }
+            default_config_path()
+        });
+
+        if config_path.exists() {
+            content = match fs::read_to_string(config_path) {
+                Ok(content) => content,
+                Err(_) => String::new(),
+            }
+        }
+
+        let config: Config = match toml::from_str(&content) {
+            Ok(config) => config,
+            Err(e) => {
+                crate::tui::println_safe(format_args!(
+                    "Found {e} in configuration file.\nAborting scan.\n"
+                ));
+                std::process::exit(1);
+            }
+        };
+
+        config
+    }
+}
+
+/// 返回首选的配置文件路径：Linux 上的 `$XDG_CONFIG_HOME/rustscanx/config.toml`
+/// （当该变量未设置时使用常见的 `~/.config` 回退），
+/// 以及 macOS / Windows 上平台等价的 `dirs::config_dir()` 位置。
+pub fn default_config_path() -> PathBuf {
+    let Some(mut config_path) = dirs::config_dir() else {
+        panic!("Could not infer config file path.");
+    };
+    config_path.push("rustscanx");
+    config_path.push("config.toml");
+    config_path
+}
+
+/// 返回较旧构建曾写入的过渡性 `$XDG_CONFIG_HOME/.rustscan.toml` 路径。
+/// 为向后兼容而保持可读。
+pub fn legacy_dot_config_path() -> PathBuf {
+    let Some(mut config_path) = dirs::config_dir() else {
+        panic!("Could not infer config file path.");
+    };
+    config_path.push(".rustscan.toml");
+    config_path
+}
+
+/// 返回用于向后兼容的、已弃用的家目录配置路径。
+pub fn old_default_config_path() -> PathBuf {
+    let Some(mut config_path) = dirs::home_dir() else {
+        panic!("Could not infer config file path.");
+    };
+    config_path.push(".rustscan.toml");
+    config_path
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+    use parameterized::parameterized;
+    use std::collections::HashSet;
+
+    use super::{Config, Opts, PortRanges, ScanOrder, ScriptsRequired};
+
+    impl Config {
+        fn default() -> Self {
+            Self {
+                addresses: Some(vec!["127.0.0.1".to_owned()]),
+                ports: None,
+                range: None,
+                greppable: Some(true),
+                batch_size: Some(25_000),
+                timeout: Some(1_000),
+                tries: Some(1),
+                ulimit: None,
+                command: Some(vec!["-A".to_owned()]),
+                accessible: Some(true),
+                resolver: None,
+                scan_order: Some(ScanOrder::Random),
+                scripts: None,
+                exclude_ports: None,
+                exclude_addresses: None,
+                udp: Some(false),
+                no_banner: None,
+                closed: Some(false),
+                interval: None,
+            }
+        }
+    }
+
+    #[test]
+    fn verify_cli() {
+        Opts::command().debug_assert();
+    }
+
+    #[parameterized(input = {
+        vec!["rustscan", "--addresses", "127.0.0.1"],
+        vec!["rustscan", "--addresses", "127.0.0.1", "--", "-sCV"],
+        vec!["rustscan", "--addresses", "127.0.0.1", "--", "-A"],
+        vec!["rustscan", "-t", "1500", "-a", "127.0.0.1", "--", "-A", "-sC"],
+        vec!["rustscan", "--addresses", "127.0.0.1", "--", "--script", r#""'(safe and vuln)'""#],
+    }, command = {
+        vec![],
+        vec!["-sCV".to_owned()],
+        vec!["-A".to_owned()],
+        vec!["-A".to_owned(), "-sC".to_owned()],
+        vec!["--script".to_owned(), "\"'(safe and vuln)'\"".to_owned()],
+    })]
+    fn parse_trailing_command(input: Vec<&str>, command: Vec<String>) {
+        let opts = Opts::parse_from(input);
+
+        assert_eq!(vec!["127.0.0.1".to_owned()], opts.addresses);
+        assert_eq!(command, opts.command);
+    }
+
+    #[test]
+    fn parses_explicit_batch_size() {
+        let opts = Opts::parse_from(["rustscan", "-a", "127.0.0.1", "-b", "1234"]);
+
+        assert_eq!(opts.batch_size, 1234);
+    }
+
+    #[test]
+    fn parses_explicit_long_batch_size() {
+        let opts = Opts::parse_from(["rustscan", "-a", "127.0.0.1", "--batch-size", "4321"]);
+
+        assert_eq!(opts.batch_size, 4321);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_platform_validation_accepts_batch_size() {
+        let opts = Opts::parse_from(["rustscan", "-a", "127.0.0.1", "--batch-size", "500"]);
+
+        assert!(opts.validate_platform().is_ok());
+        assert_eq!(opts.batch_size, 500);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_rejects_ulimit() {
+        let opts = Opts::parse_from(["rustscan", "-a", "127.0.0.1", "--ulimit", "5000"]);
+
+        let error = opts
+            .validate_platform()
+            .expect_err("Windows must reject --ulimit");
+
+        assert!(error.contains("--ulimit"));
+        assert!(error.contains("Unix"));
+        assert!(error.contains("--batch-size"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_hides_ulimit_from_help() {
+        let help = Opts::command().render_long_help().to_string();
+
+        assert!(
+            !help.contains("--ulimit"),
+            "--ulimit should not be advertised on Windows"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_rejects_ulimit_from_config_merge() {
+        let mut opts = Opts {
+            no_config: false,
+            ..Default::default()
+        };
+        let mut config = Config::default();
+        config.ulimit = Some(5_000);
+
+        opts.merge(&config);
+
+        let error = opts
+            .validate_platform()
+            .expect_err("Windows must reject --ulimit supplied by configuration");
+
+        assert!(error.contains("--ulimit"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn unix_platform_validation_accepts_ulimit() {
+        let opts = Opts::parse_from(["rustscan", "-a", "127.0.0.1", "--ulimit", "5000"]);
+
+        assert!(opts.validate_platform().is_ok());
+        assert_eq!(opts.ulimit, Some(5_000));
+    }
+
+    #[test]
+    fn opts_no_merge_when_config_is_ignored() {
+        let mut opts = Opts::default();
+        let config = Config::default();
+
+        opts.merge(&config);
+
+        assert_eq!(opts.addresses, vec![] as Vec<String>);
+        assert!(opts.greppable);
+        assert!(!opts.accessible);
+        assert_eq!(opts.timeout, 0);
+        assert_eq!(opts.command, vec![] as Vec<String>);
+        assert_eq!(opts.scan_order, ScanOrder::Serial);
+    }
+
+    #[test]
+    fn opts_merge_required_arguments() {
+        let mut opts = Opts::default();
+        let config = Config::default();
+
+        opts.merge_required(&config);
+
+        assert_eq!(opts.addresses, config.addresses.unwrap());
+        assert_eq!(opts.greppable, config.greppable.unwrap());
+        assert_eq!(opts.timeout, config.timeout.unwrap());
+        assert_eq!(opts.command, config.command.unwrap());
+        assert_eq!(opts.accessible, config.accessible.unwrap());
+        assert_eq!(opts.scan_order, config.scan_order.unwrap());
+        assert_eq!(opts.scripts, ScriptsRequired::Default);
+    }
+
+    #[test]
+    fn opts_merge_optional_arguments() {
+        let mut opts = Opts::default();
+        let mut config = Config::default();
+        config.range = Some(PortRanges(vec![(1, 1_000)]));
+        config.ulimit = Some(1_000);
+        config.resolver = Some("1.1.1.1".to_owned());
+
+        opts.merge_optional(&config);
+
+        assert_eq!(opts.range, config.range);
+        assert_eq!(opts.ulimit, config.ulimit);
+        assert_eq!(opts.resolver, config.resolver);
+    }
+
+    #[test]
+    fn cli_arguments_override_config() {
+        // 针对 #722 的回归测试：配置文件曾会静默地替换
+        // 在命令行上给出的选项，例如用它的 `range` 覆盖 `-r`。
+        let mut opts = Opts::try_read_from([
+            "rustscan",
+            "-a",
+            "192.168.0.1",
+            "-r",
+            "8600-8650",
+            "-b",
+            "100",
+            // 显式传入 clap 的默认值仍必须胜出。
+            "-t",
+            "1500",
+            "--tries",
+            "3",
+            "--scan-order",
+            "serial",
+            "--scripts",
+            "none",
+            "-g",
+            "--",
+            "-sV",
+        ])
+        .unwrap();
+        let config: Config = toml::from_str(
+            r#"
+            addresses = ["127.0.0.1"]
+            range = { start = 1, end = 100 }
+            batch_size = 25000
+            timeout = 1000
+            tries = 1
+            scan_order = "Random"
+            scripts = "Custom"
+            greppable = false
+            command = ["-A"]
+            "#,
+        )
+        .unwrap();
+
+        opts.merge(&config);
+
+        assert_eq!(opts.addresses, vec!["192.168.0.1".to_owned()]);
+        assert_eq!(opts.range, Some(PortRanges(vec![(8_600, 8_650)])));
+        assert_eq!(opts.batch_size, 100);
+        assert_eq!(opts.timeout, 1_500);
+        assert_eq!(opts.tries, 3);
+        assert_eq!(opts.scan_order, ScanOrder::Serial);
+        assert_eq!(opts.scripts, ScriptsRequired::None);
+        assert!(opts.greppable);
+        assert_eq!(opts.command, vec!["-sV".to_owned()]);
+    }
+
+    #[test]
+    fn config_fills_arguments_not_given_on_cli() {
+        let mut opts = Opts::try_read_from(["rustscan", "-a", "192.168.0.1"]).unwrap();
+        let config: Config = toml::from_str(
+            r#"
+            addresses = ["127.0.0.1"]
+            range = { start = 1, end = 100 }
+            batch_size = 25000
+            timeout = 1000
+            tries = 3
+            scan_order = "Random"
+            greppable = true
+            command = ["-A"]
+            "#,
+        )
+        .unwrap();
+
+        opts.merge(&config);
+
+        // 只输入了 `-a`；像 `-b 4500` 这样的 clap 默认值不应计入。
+        assert_eq!(opts.cli_args, HashSet::from(["addresses".to_owned()]));
+        assert_eq!(opts.addresses, vec!["192.168.0.1".to_owned()]);
+        assert_eq!(opts.range, Some(PortRanges(vec![(1, 100)])));
+        assert_eq!(opts.batch_size, 25_000);
+        assert_eq!(opts.timeout, 1_000);
+        assert_eq!(opts.tries, 3);
+        assert_eq!(opts.scan_order, ScanOrder::Random);
+        assert!(opts.greppable);
+        assert_eq!(opts.command, vec!["-A".to_owned()]);
+    }
+
+    #[test]
+    fn parses_comma_separated_ranges() {
+        let opts = Opts::parse_from([
+            "rustscan",
+            "-a",
+            "127.0.0.1",
+            "-r",
+            "1-100, 200-300,5000-5100",
+        ]);
+
+        assert_eq!(
+            opts.range,
+            Some(PortRanges(vec![(1, 100), (200, 300), (5_000, 5_100)]))
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_ranges() {
+        for range in ["", "300-200", "1-100,", "1-2-3", "a-b", "1-70000"] {
+            assert!(
+                Opts::try_parse_from(["rustscan", "-a", "127.0.0.1", "-r", range]).is_err(),
+                "{:?} should be rejected",
+                range
+            );
+        }
+    }
+
+    #[test]
+    fn config_range_accepts_legacy_table() {
+        let config: Config = toml::from_str("range = { start = 1, end = 1000 }").unwrap();
+
+        assert_eq!(config.range, Some(PortRanges(vec![(1, 1_000)])));
+    }
+
+    #[test]
+    fn config_range_accepts_string_and_pairs() {
+        let expected = Some(PortRanges(vec![(1, 100), (200, 300)]));
+
+        let config: Config = toml::from_str("range = \"1-100,200-300\"").unwrap();
+        assert_eq!(config.range, expected);
+
+        let config: Config = toml::from_str("range = [[1, 100], [200, 300]]").unwrap();
+        assert_eq!(config.range, expected);
+    }
+
+    #[test]
+    fn config_range_rejects_invalid_ranges() {
+        for range in [
+            "range = { start = 10, end = 1 }",
+            "range = [[10, 1]]",
+            "range = []",
+            "range = \"10-1\"",
+        ] {
+            assert!(
+                toml::from_str::<Config>(range).is_err(),
+                "{:?} should be rejected",
+                range
+            );
+        }
+    }
+
+    #[test]
+    fn parses_interval_in_milliseconds() {
+        let opts = Opts::parse_from(["rustscan", "-a", "127.0.0.1", "--interval", "250"]);
+        assert_eq!(opts.interval, 250);
+
+        let opts = Opts::parse_from(["rustscan", "-a", "127.0.0.1"]);
+        assert_eq!(opts.interval, 0);
+    }
+}

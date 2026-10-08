@@ -1,0 +1,303 @@
+use std::collections::BTreeMap;
+use std::fs::{self, File};
+
+use std::env;
+use std::io::{BufReader, Read};
+use std::path::PathBuf;
+use std::process::Command;
+
+// 读入一个按端口组织有效载荷的文件
+pub fn main() {
+    let mut file_path = env::current_dir().expect("cant find curr dir");
+    file_path.push("./nmap-payloads");
+
+    let mut data = String::new();
+    let file = File::open(&file_path).expect("File not found.");
+    let mut file_buf = BufReader::new(file);
+    file_buf
+        .read_to_string(&mut data)
+        .expect("unable to read file");
+
+    let mut fp_map: BTreeMap<i32, String> = BTreeMap::new();
+
+    let mut count = 0;
+    let mut capturing = false;
+    let mut curr = String::new();
+
+    for line in data.trim().split('\n') {
+        // 去掉行尾的回车符，以便 CRLF 检出与 LF 检出的解析结果
+        // 完全一致（否则 `\r` 会污染端口 token，且空行不再看起来是空的）。
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.contains('#') || line.is_empty() {
+            continue;
+        }
+
+        if line.starts_with("udp") {
+            if !curr.is_empty() {
+                fp_map.insert(count, curr);
+                curr = String::new();
+            }
+            capturing = true;
+            count += 1;
+        }
+
+        if capturing {
+            if !curr.is_empty() {
+                curr.push(' ');
+            }
+            curr.push_str(line);
+        }
+    }
+
+    let pb_linenr = ports_v(&fp_map);
+    let payb_linenr = payloads_v(&fp_map);
+    let map = port_payload_map(pb_linenr, payb_linenr);
+
+    generate_code(map);
+}
+
+/// 生成一个名为 Generated.rs 的文件，并从命令行调用 cargo fmt
+///
+/// # 参数
+///
+/// * `port_payload_map` - 一个将端口号映射到有效载荷数据的 BTreeMap
+fn generate_code(port_payload_map: BTreeMap<Vec<u16>, Vec<u8>>) {
+    let dest_path = PathBuf::from("src/generated.rs");
+
+    let mut generated_code = String::new();
+    generated_code.push_str("use std::collections::BTreeMap;\n");
+    generated_code.push_str("use once_cell::sync::Lazy;\n\n");
+
+    generated_code.push_str("fn generated_data() -> BTreeMap<Vec<u16>, Vec<u8>> {\n");
+    generated_code.push_str("    let mut map = BTreeMap::new();\n");
+
+    for (ports, payloads) in port_payload_map {
+        generated_code.push_str("    map.insert(vec![");
+        generated_code.push_str(
+            &ports
+                .iter()
+                .map(|&p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        generated_code.push_str("], vec![");
+        generated_code.push_str(
+            &payloads
+                .iter()
+                .map(|&p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        generated_code.push_str("]);\n");
+    }
+
+    generated_code.push_str("    map\n");
+    generated_code.push_str("}\n\n");
+
+    generated_code.push_str(
+        "static PARSED_DATA: Lazy<BTreeMap<Vec<u16>, Vec<u8>>> = Lazy::new(generated_data);\n",
+    );
+    generated_code.push_str("pub fn get_parsed_data() -> &'static BTreeMap<Vec<u16>, Vec<u8>> {\n");
+    generated_code.push_str("    &PARSED_DATA\n");
+    generated_code.push_str("}\n");
+
+    fs::write(dest_path, generated_code).unwrap();
+
+    // 格式化生成的代码
+    Command::new("cargo")
+        .arg("fmt")
+        .arg("--all")
+        .output()
+        .expect("Failed to execute cargo fmt");
+}
+
+/// 创建一个将行号映射到 Vec<u16> 端口列表的 BTreeMap
+///
+/// # 参数
+///
+/// * `fp_map` - 一个包含已解析文件数据的 BTreeMap
+///
+/// # 返回值
+///
+/// 一个 BTreeMap，其键为行号，值为端口向量
+fn ports_v(fp_map: &BTreeMap<i32, String>) -> BTreeMap<i32, Vec<u16>> {
+    let mut pb_linenr: BTreeMap<i32, Vec<u16>> = BTreeMap::new();
+    let mut port_list: Vec<u16> = Vec::new();
+
+    for (&line_nr, ports) in fp_map {
+        if ports.contains("udp ") {
+            let remain = &ports[4..];
+            let mut start = remain.split(' ');
+
+            let ports = start.next().unwrap();
+            let port_segments: Vec<&str> = ports.split(',').collect();
+
+            for segment in port_segments {
+                if segment.contains('-') {
+                    let range: Vec<&str> = segment.trim().split('-').collect();
+                    let start = range[0].parse::<u16>().unwrap();
+                    let end = range[1].parse::<u16>().unwrap();
+
+                    for port in start..end {
+                        port_list.push(port);
+                    }
+                } else if !segment.is_empty() {
+                    match segment.parse::<u16>() {
+                        Ok(port) => port_list.push(port),
+                        Err(_) => println!("Error parsing port: {segment}"),
+                    }
+                }
+            }
+        }
+
+        pb_linenr.insert(line_nr, port_list.clone());
+        port_list.clear();
+    }
+
+    pb_linenr
+}
+
+/// 将有效载荷解析成一个将行号映射到有效载荷字节向量的 BTreeMap
+///
+/// # 参数
+///
+/// * `fp_map` - 一个包含已解析文件数据的 BTreeMap
+///
+/// # 返回值
+///
+/// 一个 BTreeMap，其键为行号，值为有效载荷字节向量
+fn payloads_v(fp_map: &BTreeMap<i32, String>) -> BTreeMap<i32, Vec<u8>> {
+    let mut payb_linenr: BTreeMap<i32, Vec<u8>> = BTreeMap::new();
+
+    for (&line_nr, data) in fp_map {
+        if data.contains('"') {
+            let start = data.find('"').expect("payload opening \" not found");
+            // 从开引号处开始传递：解码器会自行配对引号，
+            // 以切分多行的片段。
+            payb_linenr.insert(line_nr, parser(data[start..].trim()));
+        }
+    }
+
+    payb_linenr
+}
+
+/// 把一个带引号的 Nmap 有效载荷块转换为字节。
+///
+/// # 参数
+///
+/// * `payload` - 从首个开引号开始的原始块文本：
+///   一个或多个以空白分隔的 `"..."` 片段
+///
+/// # 返回值
+///
+/// 解码后的探测字节：各片段用 [`decode_segment`] 解码，并无分隔地
+/// 拼接起来，因此多行探测能被精确地重新组装。
+fn parser(payload: &str) -> Vec<u8> {
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut rest = payload.trim();
+    while let Some(open) = rest.find('"') {
+        let after_open = &rest[open + 1..];
+        match split_segment(after_open) {
+            Some((segment, remainder)) => {
+                decode_segment(segment, &mut bytes);
+                rest = remainder;
+            }
+            None => {
+                // 未闭合的尾部引号：把剩余部分按字面解码。
+                decode_segment(after_open, &mut bytes);
+                break;
+            }
+        }
+    }
+
+    bytes
+}
+
+/// 切分出首个 `"..."` 片段：`text` 必须紧接在一个开引号之后开始。
+/// 转义引号（`\"`）不会终止该片段。
+///
+/// 返回片段主体以及闭引号之后的剩余部分。
+fn split_segment(text: &str) -> Option<(&str, &str)> {
+    let mut escaped = false;
+    for (i, c) in text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if c == '"' {
+            return Some((&text[..i], &text[i + 1..]));
+        }
+    }
+    None
+}
+
+/// 以 C 风格转义格式解码一个带引号的 Nmap 有效载荷片段：
+/// `\xNN` 变成一个字节，常见的单字符转义（`\\`、`\"`、
+/// `\0`、`\n`、`\r`、`\t`）解码为它们的值，而其他每个
+/// 字符都贡献其字面字节。
+///
+/// 保留字面文本很重要：多个探测嵌入了纯文本的协议字（SNMP 的
+/// `public` 团体名、NetBIOS 名称、LDAP 的 `objectClass`、SSDP 头部）。
+/// 先前仅按十六进制数字解码会把它们弄成错误的字节，导致被探测方从不回应。
+fn decode_segment(segment: &str, bytes: &mut Vec<u8>) {
+    let mut chars = segment.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            let mut buf = [0; 4];
+            bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            continue;
+        }
+        match chars.next() {
+            Some('x') => {
+                let hi = chars.next().unwrap_or('0');
+                let lo = chars.next().unwrap_or('0');
+                let hex: String = [hi, lo].iter().collect();
+                bytes.push(u8::from_str_radix(&hex, 16).unwrap_or(0));
+            }
+            Some('0') => bytes.push(0),
+            Some('n') => bytes.push(b'\n'),
+            Some('r') => bytes.push(b'\r'),
+            Some('t') => bytes.push(b'\t'),
+            Some('\\') => bytes.push(b'\\'),
+            Some('"') => bytes.push(b'"'),
+            // 未知转义：按字面保留该字符，与 Nmap 一致，
+            // Nmap 会把无法识别的转义原样传递。
+            Some(other) => {
+                let mut buf = [0; 4];
+                bytes.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+            }
+            None => bytes.push(b'\\'),
+        }
+    }
+}
+
+/// 合并端口 BTreeMap 与有效载荷 BTreeMap
+///
+/// # 参数
+///
+/// * `pb_linenr` - 一个将行号映射到端口向量的 BTreeMap
+/// * `payb_linenr` - 一个将行号映射到有效载荷字节向量的 BTreeMap
+///
+/// # 返回值
+///
+/// 一个将端口向量映射到有效载荷字节向量的 BTreeMap
+fn port_payload_map(
+    pb_linenr: BTreeMap<i32, Vec<u16>>,
+    payb_linenr: BTreeMap<i32, Vec<u8>>,
+) -> BTreeMap<Vec<u16>, Vec<u8>> {
+    let mut ppm_fin: BTreeMap<Vec<u16>, Vec<u8>> = BTreeMap::new();
+
+    for (port_linenr, ports) in pb_linenr {
+        for (pay_linenr, payloads) in &payb_linenr {
+            if pay_linenr == &port_linenr {
+                ppm_fin.insert(ports.to_vec(), payloads.to_vec());
+            }
+        }
+    }
+
+    ppm_fin
+}

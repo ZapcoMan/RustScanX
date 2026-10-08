@@ -1,0 +1,75 @@
+[package]
+name = "RustScanX"
+version = "2.4.1"
+authors = ["RustScanX", "Autumn <autumn@skerritt.blog>"]
+edition = "2018"
+description = "Faster Nmap Scanning with Rust — RustScanX，基于 RustScan 二次开发的现代化端口扫描器"
+homepage = "https://github.com/bee-san/RustScan"
+repository = "https://github.com/bee-san/RustScan"
+license = "GPL-3.0-only"
+keywords = ["port", "scanning", "nmap"]
+categories = ["command-line-utilities"]
+readme = "README.md"
+exclude = [
+    ".github/*",
+    "pictures/*",
+    "rustscan-debbuilder/*",
+]
+
+[dependencies]
+clap = { version = "4.6.1", features = ["derive", "wrap_help"] }
+colored = "3.1.1"
+# Async runtime for the scanner. hickory-resolver already depends on tokio, so
+# this adds no crates; only the features the scanner itself uses are listed.
+tokio = { version = "1.44.2", features = ["rt", "net", "time"] }
+# Only `FuturesUnordered`/`StreamExt` are used; the executor is not needed.
+futures = { version = "0.3", default-features = false, features = ["std"] }
+rlimit = "0.11.0"
+log = "0.4.32"
+env_logger = "0.11.10"
+anstream = "=1.0.0"
+dirs = "7.0.0"
+gcd = "2.0.1"
+rand = "0.10.1"
+colorful = "0.3.2"
+ansi_term = "0.12.1"
+toml = "1.1.2"
+serde = "1.0.124"
+serde_derive = "1.0.116"
+cidr-utils = "0.7.1"
+itertools = "0.15.0"
+hickory-resolver = { version = "0.24.3", features = ["dns-over-rustls"] }
+anyhow = "1.0.40"
+text_placeholder = { version = "0.5", features = ["struct_context"] }
+once_cell = "1.21.4"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Networking_WinSock"] }
+
+[dev-dependencies]
+parameterized = "2.0.0"
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[package.metadata.deb]
+depends = "$auto, nmap"
+section = "rust"
+
+[profile.release]
+lto = true
+panic = 'abort'
+strip = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "rustscanx"
+path = "src/main.rs"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tarpaulin_include)"] }
+
+[[bench]]
+name = "benchmark_helpers"
+harness = false
