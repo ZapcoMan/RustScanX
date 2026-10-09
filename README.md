@@ -79,7 +79,7 @@ cd RustScanX
 cargo install --path .
 ```
 
-构建产物二进制名为 **`rustscanx`**。开发调试可直接运行：
+构建产物二进制名为 **`RustScanX`**。开发调试可直接运行：
 
 ```bash
 cargo run --release -- -a 127.0.0.1
@@ -91,35 +91,35 @@ cargo run --release -- -a 127.0.0.1
 
 ##  使用示例
 
-以下参数均取自 `src/input.rs` 中的 `Opts` 定义（`rustscanx --help` 查看完整列表）。
+以下参数均取自 `src/input.rs` 中的 `Opts` 定义（`RustScanX --help` 查看完整列表）。
 
 ```bash
 # 扫描单个主机的常见端口范围
-rustscanx -a 127.0.0.1 -r 1-1000
+RustScanX -a 127.0.0.1 -r 1-1000
 
 # 指定端口列表
-rustscanx -a 127.0.0.1 -p 22,80,443,8080
+RustScanX -a 127.0.0.1 -p 22,80,443,8080
 
 # 扫描全部 65535 端口（未给 -p/-r 时的默认范围），调整超时与并发
-rustscanx -a 192.168.1.0/24 -t 2000 -b 5000
+RustScanX -a 192.168.1.0/24 -t 2000 -b 5000
 
 # 随机顺序扫描，并排除某些端口
-rustscanx -a example.com --scan-order random --exclude-ports 80,443
+RustScanX -a example.com --scan-order random --exclude-ports 80,443
 
 # 排除部分目标地址
-rustscanx -a 192.168.0.0/16 -x 192.168.1.0/24
+RustScanX -a 192.168.0.0/16 -x 192.168.1.0/24
 
 # 只输出可 grep 的结果，不运行脚本
-rustscanx -a 10.0.0.1 -g --scripts none
+RustScanX -a 10.0.0.1 -g --scripts none
 
 # UDP 扫描
-rustscanx -a 127.0.0.1 -r 1-1024 --udp
+RustScanX -a 127.0.0.1 -r 1-1024 --udp
 
 # 慢速、低噪声扫描：每扫完一个端口等待 250ms，并列出主动拒绝的关闭端口
-rustscanx -a 127.0.0.1 -r 1-1000 --interval 250 --closed
+RustScanX -a 127.0.0.1 -r 1-1000 --interval 250 --closed
 
 # 把 `--` 之后的参数透传给脚本引擎（默认会把结果管道进 nmap）
-rustscanx -t 1500 -a 127.0.0.1 -- -A -sC
+RustScanX -t 1500 -a 127.0.0.1 -- -A -sC
 ```
 
 ---
@@ -129,7 +129,7 @@ rustscanx -t 1500 -a 127.0.0.1 -- -A -sC
 ```
 RustScan/
 ├── README.md                     # 项目说明（本文件）
-├── Cargo.toml / Cargo.lock       # 包与依赖（[[bin]] name = "rustscanx"）
+├── Cargo.toml / Cargo.lock       # 包与依赖（[[bin]] name = "RustScanX"）
 ├── build.rs                      # 编译期解析 nmap-payloads，生成 UDP 有效载荷表
 ├── config.toml                   # 端口→分类数据文件
 ├── justfile / Makefile           # 构建与打包配方
@@ -193,7 +193,7 @@ RustScan/
 
 RustScanX 会读取 TOML 配置文件，**命令行显式给出的选项优先于配置文件**（`Opts::merge` 记录了哪些字段来自命令行）。默认按顺序尝试以下路径：
 
-1. `$XDG_CONFIG_HOME/rustscanx/config.toml`（Linux；未设置时回退 `~/.config`），及 macOS / Windows 上平台等价的 `dirs::config_dir()`；
+1. `$XDG_CONFIG_HOME/RustScanX/config.toml`（Linux；未设置时回退 `~/.config`），及 macOS / Windows 上平台等价的 `dirs::config_dir()`；
 2. 过渡路径 `$XDG_CONFIG_HOME/.rustscan.toml`；
 3. 兼容历史版本的家目录 `~/.rustscan.toml`。
 
