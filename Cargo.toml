@@ -1,5 +1,5 @@
 [package]
-name = "rustscanx"
+name = "RustScanX"
 version = "2.4.1"
 authors = ["RustScanX", "Autumn <autumn@skerritt.blog>"]
 edition = "2018"
@@ -64,7 +64,7 @@ strip = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [[bin]]
-name = "rustscanx"
+name = "RustScanX"
 path = "src/main.rs"
 
 [lints.rust]

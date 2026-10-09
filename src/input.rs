@@ -121,7 +121,7 @@ fn parse_ranges(input: &str) -> Result<PortRanges, String> {
 
 #[derive(Parser, Debug, Clone)]
 #[command(
-    name = "rustscanx",
+    name = "RustScanX",
     version = env!("CARGO_PKG_VERSION"),
     max_term_width = 120,
     help_template = "{bin} {version}\n{about}\n\nUSAGE:\n    {usage}\n\nOPTIONS:\n{options}",
@@ -181,7 +181,7 @@ pub struct Opts {
     pub timeout: u32,
 
     /// The number of tries before a port is assumed to be closed.
-    /// If set to 0, rustscanx will correct it to 1.
+    /// If set to 0, RustScanX will correct it to 1.
     #[arg(long, default_value = "1")]
     pub tries: u8,
 
@@ -206,7 +206,7 @@ pub struct Opts {
 
     /// The Script arguments to run.
     /// To use the argument -A, end RustScan's args with '-- -A'.
-    /// Example: 'rustscanx -t 1500 -a 127.0.0.1 -- -A -sC'.
+    /// Example: 'RustScanX -t 1500 -a 127.0.0.1 -- -A -sC'.
     /// This command adds -Pn -vvv -p $PORTS automatically to nmap.
     /// For things like --script '(safe and vuln)' enclose it in quotations marks \"'(safe and vuln)'\"
     #[arg(last = true)]
@@ -458,14 +458,14 @@ impl Config {
     }
 }
 
-/// 返回首选的配置文件路径：Linux 上的 `$XDG_CONFIG_HOME/rustscanx/config.toml`
+/// 返回首选的配置文件路径：Linux 上的 `$XDG_CONFIG_HOME/RustScanX/config.toml`
 /// （当该变量未设置时使用常见的 `~/.config` 回退），
 /// 以及 macOS / Windows 上平台等价的 `dirs::config_dir()` 位置。
 pub fn default_config_path() -> PathBuf {
     let Some(mut config_path) = dirs::config_dir() else {
         panic!("Could not infer config file path.");
     };
-    config_path.push("rustscanx");
+    config_path.push("RustScanX");
     config_path.push("config.toml");
     config_path
 }

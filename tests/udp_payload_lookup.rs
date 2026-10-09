@@ -1,5 +1,5 @@
-use rustscanx::generated::get_parsed_data;
-use rustscanx::scanner::build_udp_payload_lookup;
+use RustScanX::generated::get_parsed_data;
+use RustScanX::scanner::build_udp_payload_lookup;
 
 #[test]
 fn udp_payload_lookup_contains_common_udp_ports() {

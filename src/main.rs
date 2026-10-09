@@ -2,13 +2,13 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::doc_markdown, clippy::if_not_else, clippy::non_ascii_literal)]
 
-use rustscanx::benchmark::{Benchmark, NamedTimer};
-use rustscanx::input::{self, Config, Opts, ScriptsRequired};
-use rustscanx::port_strategy::PortStrategy;
-use rustscanx::scanner::{PortStatus, Scanner};
-use rustscanx::scripts::{init_scripts, Script, ScriptFile};
-use rustscanx::tui::println_safe;
-use rustscanx::{detail, funny_opening, output, warning};
+use RustScanX::benchmark::{Benchmark, NamedTimer};
+use RustScanX::input::{self, Config, Opts, ScriptsRequired};
+use RustScanX::port_strategy::PortStrategy;
+use RustScanX::scanner::{PortStatus, Scanner};
+use RustScanX::scripts::{init_scripts, Script, ScriptFile};
+use RustScanX::tui::println_safe;
+use RustScanX::{detail, funny_opening, output, warning};
 
 use colorful::{Color, Colorful};
 use std::collections::HashMap;
@@ -16,7 +16,7 @@ use std::net::IpAddr;
 use std::string::ToString;
 use std::time::Duration;
 
-use rustscanx::address::parse_addresses;
+use RustScanX::address::parse_addresses;
 
 extern crate colorful;
 extern crate dirs;

@@ -20,9 +20,9 @@
 //! ```no_run
 //! use std::{net::IpAddr, time::Duration};
 //!
-//! use rustscanx::input::{PortRanges, ScanOrder};
-//! use rustscanx::port_strategy::PortStrategy;
-//! use rustscanx::scanner::Scanner;
+//! use RustScanX::input::{PortRanges, ScanOrder};
+//! use RustScanX::port_strategy::PortStrategy;
+//! use RustScanX::scanner::Scanner;
 //!
 //! fn main() {
 //!     let addrs = vec!["127.0.0.1".parse::<IpAddr>().unwrap()];

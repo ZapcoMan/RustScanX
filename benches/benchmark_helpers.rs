@@ -1,12 +1,12 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use rustscanx::generated::get_parsed_data;
-use rustscanx::input::{Opts, PortRanges, ScanOrder};
-use rustscanx::port_strategy::PortStrategy;
-use rustscanx::scanner::{build_udp_payload_lookup, Scanner};
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::net::IpAddr;
 use std::time::Duration;
+use RustScanX::generated::get_parsed_data;
+use RustScanX::input::{Opts, PortRanges, ScanOrder};
+use RustScanX::port_strategy::PortStrategy;
+use RustScanX::scanner::{build_udp_payload_lookup, Scanner};
 
 fn bench_address() {
     let _addrs = ["127.0.0.1".parse::<IpAddr>().unwrap()];
@@ -32,7 +32,7 @@ fn bench_address_parsing() {
         ]),
         ..Default::default()
     };
-    let _ips = rustscanx::address::parse_addresses(&opts);
+    let _ips = RustScanX::address::parse_addresses(&opts);
 }
 
 // 复现旧的 UDP 有效载荷选择行为：

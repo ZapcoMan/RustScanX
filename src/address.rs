@@ -22,8 +22,8 @@ use crate::warning;
 /// 会遍历所有可能的 IP 输入方式（文件或通过参数解析）。
 ///
 /// ```rust
-/// # use rustscanx::input::Opts;
-/// # use rustscanx::address::parse_addresses;
+/// # use RustScanX::input::Opts;
+/// # use RustScanX::address::parse_addresses;
 /// let mut opts = Opts::default();
 /// opts.addresses = vec!["192.168.0.0/30".to_owned()];
 ///
@@ -36,7 +36,7 @@ use crate::warning;
 ///
 /// 这个函数会阻塞：它读取文件并解析主机名，而 hickory 的同步
 /// [`Resolver`] 会运行自己的一个 Tokio 运行时，而 Tokio 拒绝在异步上下文中
-/// 销毁它。请在启动你的运行时之前（正如 `rustscanx` 二进制所做的那样），或从
+/// 销毁它。请在启动你的运行时之前（正如 `RustScanX` 二进制所做的那样），或从
 /// `tokio::task::spawn_blocking` 中调用它，而不是直接从 async 代码调用。
 pub fn parse_addresses(input: &Opts) -> Vec<IpAddr> {
     parse_addresses_with_resolver(input, || get_resolver(&input.resolver))
@@ -106,7 +106,7 @@ fn parse_addresses_with_resolver(
 /// 或通过 DNS 解析器列表来解析它。
 ///
 /// ```rust
-/// # use rustscanx::address::parse_address;
+/// # use RustScanX::address::parse_address;
 /// # use hickory_resolver::Resolver;
 /// let ips = parse_address("127.0.0.1", &Resolver::default().unwrap());
 /// ```
@@ -161,7 +161,7 @@ fn resolve_ips_from_host<'a>(
 /// 3. 需要被解析的主机名（例如 "example.com"）
 ///
 /// ```rust
-/// # use rustscanx::address::parse_excluded_networks;
+/// # use RustScanX::address::parse_excluded_networks;
 /// # use hickory_resolver::Resolver;
 /// let resolver = Resolver::default().unwrap();
 /// let excluded = parse_excluded_networks(&Some(vec!["192.168.0.0/24".to_owned()]), &resolver);

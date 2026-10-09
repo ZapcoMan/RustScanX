@@ -4,7 +4,7 @@
 //!
 //! ```rust
 //! // 初始化 Benchmark 向量
-//! # use rustscanx::benchmark::{Benchmark, NamedTimer};
+//! # use RustScanX::benchmark::{Benchmark, NamedTimer};
 //! # use log::info;
 //! let mut bm = Benchmark::init();
 //! // 以某个名称启动命名计时器

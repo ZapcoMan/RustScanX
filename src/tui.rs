@@ -21,7 +21,7 @@ pub fn println_safe(args: std::fmt::Arguments<'_>) {
         Err(e) => {
             let _ = writeln!(
                 std::io::stderr(),
-                "rustscanx: failed writing to stdout: {e}"
+                "RustScanX: failed writing to stdout: {e}"
             );
             std::process::exit(1);
         }
