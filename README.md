@@ -74,8 +74,8 @@ RustScanX 是原项目的二次开发分支，**尚未发布到 crates.io / 各�
 ### 从源码构建并安装
 
 ```bash
-git clone https://github.com/bee-san/RustScan.git   # 或本分支对应的仓库地址
-cd RustScan
+git clone https://github.com/ZapcoMan/RustScanX.git
+cd RustScanX
 cargo install --path .
 ```
 
@@ -162,30 +162,30 @@ RustScan/
 
 ##  命令行参数参考
 
-| 参数 | 默认 | 含义 |
-| :--- | :--- | :--- |
-| `-a, --addresses` | — | 逗号分隔或文件形式的 CIDR/IP/主机列表 |
-| `-p, --ports` | — | 逗号分隔端口列表，如 `80,443,8080`（与 `-r` 互斥） |
-| `-r, --range` | 未给 `-p/-r` 时为 `1-65535` | `start-end` 逗号分隔范围，如 `1-500,1000-2500` |
-| `-b, --batch-size` | `4500` | 并发批量大小（在途连接上限） |
-| `-t, --timeout` | `1500` | 判定端口关闭前的超时毫秒数 |
-| `--tries` | `1` | 连接重试次数（为 0 时自动纠正为 1） |
-| `--scan-order` | `serial` | `serial`（升序）或 `random`（LCG 随机） |
-| `--scripts` | `default` | `none` / `default` / `custom` |
-| `--exclude-ports` | — | 排除的端口列表（位图过滤） |
-| `-x, --exclude-addresses` | — | 排除的 CIDR/IP/主机列表 |
-| `--udp` | `false` | 启用 UDP 扫描 |
-| `--closed` | `false` | 额外列出主动拒绝（关闭）的 TCP 端口（不对它们运行脚本） |
-| `--interval` | `0` | 每扫完一个端口（在每个地址上）后等待的毫秒数，用于慢扫 |
-| `-g, --greppable` | `false` | 只输出 IP 与端口，便于管道/落盘 |
-| `--accessible` | `false` | 关闭对屏幕阅读器不友好的输出 |
-| `--resolver` | — | 逗号分隔或文件形式的 DNS 解析器列表 |
-| `-u, --ulimit` | — | 自动提高 Unix 文件描述符限额（仅 Unix，Windows 会拒绝） |
-| `--top` | `false` | 使用配置文件中的 top ports |
-| `-n, --no-config` | `false` | 忽略配置文件 |
-| `-C, --config-path` | — | 指定配置文件路径 |
-| `--no-banner` | `false` | 隐藏开场横幅 |
-| `-- <args>` | — | 将 `--` 之后的参数透传给脚本（追加到 call_format 末尾） |
+| 参数                      | 默认                        | 含义                                                    |
+|:--------------------------|:----------------------------|:--------------------------------------------------------|
+| `-a, --addresses`         | —                           | 逗号分隔或文件形式的 CIDR/IP/主机列表                   |
+| `-p, --ports`             | —                           | 逗号分隔端口列表，如 `80,443,8080`（与 `-r` 互斥）      |
+| `-r, --range`             | 未给 `-p/-r` 时为 `1-65535` | `start-end` 逗号分隔范围，如 `1-500,1000-2500`          |
+| `-b, --batch-size`        | `4500`                      | 并发批量大小（在途连接上限）                            |
+| `-t, --timeout`           | `1500`                      | 判定端口关闭前的超时毫秒数                              |
+| `--tries`                 | `1`                         | 连接重试次数（为 0 时自动纠正为 1）                     |
+| `--scan-order`            | `serial`                    | `serial`（升序）或 `random`（LCG 随机）                 |
+| `--scripts`               | `default`                   | `none` / `default` / `custom`                           |
+| `--exclude-ports`         | —                           | 排除的端口列表（位图过滤）                              |
+| `-x, --exclude-addresses` | —                           | 排除的 CIDR/IP/主机列表                                 |
+| `--udp`                   | `false`                     | 启用 UDP 扫描                                           |
+| `--closed`                | `false`                     | 额外列出主动拒绝（关闭）的 TCP 端口（不对它们运行脚本） |
+| `--interval`              | `0`                         | 每扫完一个端口（在每个地址上）后等待的毫秒数，用于慢扫  |
+| `-g, --greppable`         | `false`                     | 只输出 IP 与端口，便于管道/落盘                         |
+| `--accessible`            | `false`                     | 关闭对屏幕阅读器不友好的输出                            |
+| `--resolver`              | —                           | 逗号分隔或文件形式的 DNS 解析器列表                     |
+| `-u, --ulimit`            | —                           | 自动提高 Unix 文件描述符限额（仅 Unix，Windows 会拒绝） |
+| `--top`                   | `false`                     | 使用配置文件中的 top ports                              |
+| `-n, --no-config`         | `false`                     | 忽略配置文件                                            |
+| `-C, --config-path`       | —                           | 指定配置文件路径                                        |
+| `--no-banner`             | `false`                     | 隐藏开场横幅                                            |
+| `-- <args>`               | —                           | 将 `--` 之后的参数透传给脚本（追加到 call_format 末尾） |
 
 ---
 
