@@ -1,5 +1,5 @@
 [package]
-name = "RustScanX"
+name = "rustscanx"
 version = "2.4.1"
 authors = ["RustScanX", "Autumn <autumn@skerritt.blog>"]
 edition = "2018"

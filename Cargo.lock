@@ -3,38 +3,6 @@
 version = 4
 
 [[package]]
-name = "RustScanX"
-version = "2.4.1"
-dependencies = [
- "ansi_term",
- "anstream",
- "anyhow",
- "cidr-utils",
- "clap",
- "colored",
- "colorful",
- "criterion",
- "dirs",
- "env_logger",
- "futures",
- "gcd",
- "hickory-resolver",
- "itertools 0.15.0",
- "libc",
- "log",
- "once_cell",
- "parameterized",
- "rand 0.10.3",
- "rlimit",
- "serde",
- "serde_derive",
- "text_placeholder",
- "tokio",
- "toml",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1446,6 +1414,38 @@ checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
 dependencies = [
  "ring",
  "untrusted",
+]
+
+[[package]]
+name = "rustscanx"
+version = "2.4.1"
+dependencies = [
+ "ansi_term",
+ "anstream",
+ "anyhow",
+ "cidr-utils",
+ "clap",
+ "colored",
+ "colorful",
+ "criterion",
+ "dirs",
+ "env_logger",
+ "futures",
+ "gcd",
+ "hickory-resolver",
+ "itertools 0.15.0",
+ "libc",
+ "log",
+ "once_cell",
+ "parameterized",
+ "rand 0.10.3",
+ "rlimit",
+ "serde",
+ "serde_derive",
+ "text_placeholder",
+ "tokio",
+ "toml",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
