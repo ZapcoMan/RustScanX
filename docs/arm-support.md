@@ -27,7 +27,7 @@ cross build --locked --release --target aarch64-unknown-linux-gnu
 cross build --locked --release --target armv7-unknown-linux-gnueabihf
 ```
 
-生成的二进制文件位于 `target/<target>/release/rustscanx`。
+生成的二进制文件位于 `target/<target>/release/RustScanX`。
 
 在 ARM 机器上（例如运行 64 位系统的 Raspberry Pi，或 Apple Silicon Mac）你不需要 `cross`；普通的原生构建即可工作：
 

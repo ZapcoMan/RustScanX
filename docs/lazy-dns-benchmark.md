@@ -23,7 +23,7 @@
 
 字面量 IP 场景额外加上 `-a 127.0.0.1`。混合场景额外加上
 `-a 127.0.0.1,192.0.2.0/30,2001:db8::/126` 和
-`--exclude-addresses 192.0.2.1,2001:db8::1`。两者都使用 `RUST_LOG=rustscanx=info`。
+`--exclude-addresses 192.0.2.1,2001:db8::1`。两者都使用 `RUST_LOG=RustScanX=info`。
 
 ## 结果
 
