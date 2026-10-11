@@ -128,8 +128,18 @@ fn main() {
         map.entry(socket.ip()).or_default().push(socket.port());
     }
 
-    for ip in ips {
-        if ports_per_ip.contains_key(&ip) {
+    // 端口排序并去重，输出按目标解析顺序遍历，保证结果可复现（便于 diff / 落盘）。
+    for ports in ports_per_ip.values_mut() {
+        ports.sort_unstable();
+        ports.dedup();
+    }
+    for ports in closed_ports_per_ip.values_mut() {
+        ports.sort_unstable();
+        ports.dedup();
+    }
+
+    for ip in &ips {
+        if ports_per_ip.contains_key(ip) {
             continue;
         }
 
@@ -146,7 +156,10 @@ fn main() {
     }
 
     let mut script_bench = NamedTimer::start("Scripts");
-    for (ip, ports) in &ports_per_ip {
+    for ip in &ips {
+        let Some(ports) = ports_per_ip.get(ip) else {
+            continue;
+        };
         let vec_str_ports: Vec<String> = ports.iter().map(ToString::to_string).collect();
 
         // nmap 的端口写法是 80,443。以逗号分隔且无空格。
@@ -205,7 +218,10 @@ fn main() {
     // 关闭的端口只会被列出；绝不会针对它们运行脚本。
     if opts.closed {
         println_safe(format_args!("closed ports:"));
-        for (ip, ports) in &closed_ports_per_ip {
+        for ip in &ips {
+            let Some(ports) = closed_ports_per_ip.get(ip) else {
+                continue;
+            };
             let ports_str = ports
                 .iter()
                 .map(ToString::to_string)
