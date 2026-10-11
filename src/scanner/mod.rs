@@ -20,7 +20,10 @@ use std::{
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr},
     num::NonZeroU8,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::io::Interest;
@@ -112,6 +115,9 @@ pub struct Scanner {
     print_open_ports: bool,
     report_closed: bool,
     interval: Duration,
+    /// 一旦操作系统报告套接字资源耗尽就置位；用于停止投递新套接字、
+    /// 优雅排空在途结果，而不是在 `panic = "abort"` 下崩溃丢结果。
+    exhausted: Arc<AtomicBool>,
 }
 
 /// 单个套接字的结果，由 [`Scanner::run_with_status`] 返回。
@@ -151,6 +157,7 @@ impl Scanner {
             print_open_ports: false,
             report_closed: false,
             interval: Duration::ZERO,
+            exhausted: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -247,7 +254,18 @@ impl Scanner {
                 let sockets = SocketIterator::new(&self.ips, std::slice::from_ref(port));
                 self.scan_sockets(sockets, &udp_payloads, &mut found_sockets, &mut errors)
                     .await;
+                if self.exhausted.load(Ordering::Relaxed) {
+                    break;
+                }
             }
+        }
+
+        if self.exhausted.load(Ordering::Relaxed) {
+            log::warn!(
+                "Socket resource exhaustion detected; stopping early with {} result(s) found so far. \
+                 Consider lowering the batch size (e.g. -b 2500).",
+                found_sockets.len()
+            );
         }
 
         debug!("Typical socket connection errors {:?}", errors.messages());
@@ -277,7 +295,7 @@ impl Scanner {
             let mut work = 0;
             while work < WORK_PER_TURN {
                 let mut started = false;
-                if ftrs.len() < self.batch_size {
+                if ftrs.len() < self.batch_size && !self.exhausted.load(Ordering::Relaxed) {
                     if let Some(socket) = sockets.next() {
                         ftrs.push(self.scan_socket(socket, udp_payloads.clone()));
                         started = true;
@@ -328,7 +346,10 @@ impl Scanner {
     /// 给定一个套接字，对它扫描 self.tries 次。
     /// 将地址转换为一个 SocketAddr
     /// 处理 `<result>` 类型
-    /// 当操作系统报告描述符耗尽时 panic。
+    /// 当操作系统报告套接字资源耗尽（Unix 的 `EMFILE`/`ENFILE`、Winsock 的
+    /// `WSAEMFILE`/`WSAENOBUFS`）时，置位共享的退避标志并返回错误，而不是 panic：
+    /// 在 `panic = "abort"` 的 release 配置下这能保留已经发现的开放端口，
+    /// 并停止继续压垮操作系统。
     /// 其他失败会保留各自的 I/O 错误，并为调试诊断附带目标上下文。
     /// 如果没有发生错误，它在 Result 中返回端口号以表示端口是开放的。
     /// 这个函数主要处理 Result 处理的逻辑。
@@ -346,6 +367,11 @@ impl Scanner {
     ) -> io::Result<PortStatus> {
         if self.udp {
             return self.scan_udp_socket(socket, udp_payloads).await;
+        }
+
+        // 已检测到资源耗尽：不再新建连接，快速返回让扫描排空在途结果。
+        if self.exhausted.load(Ordering::Relaxed) {
+            return Err(io::Error::other("skipped: socket resources exhausted"));
         }
 
         let tries = self.tries.get();
@@ -369,7 +395,14 @@ impl Scanner {
                         return Ok(PortStatus::Closed(socket));
                     }
 
-                    assert!(!is_descriptor_exhaustion(&e), "Too many open files. Please reduce batch size. The default is 5000. Try -b 2500.");
+                    if is_descriptor_exhaustion(&e) {
+                        self.exhausted.store(true, Ordering::Relaxed);
+                        return Err(diagnostic_error(
+                            e,
+                            socket.ip(),
+                            log::log_enabled!(log::Level::Debug),
+                        ));
+                    }
 
                     if nr_try == tries {
                         return Err(diagnostic_error(
