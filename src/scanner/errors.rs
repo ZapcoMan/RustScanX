@@ -58,7 +58,11 @@ pub(super) fn is_descriptor_exhaustion(error: &io::Error) -> bool {
 
 #[cfg(windows)]
 pub(super) fn is_descriptor_exhaustion(error: &io::Error) -> bool {
-    error.raw_os_error() == Some(windows_sys::Win32::Networking::WinSock::WSAEMFILE)
+    use windows_sys::Win32::Networking::WinSock::{WSAEMFILE, WSAENOBUFS};
+    // Winsock 除了 `WSAEMFILE`（打开的套接字过多）之外，并发 connect 超过
+    // 动态 backlog 时还会返回 `WSAENOBUFS`（无缓冲空间），二者都应视为
+    // 需要退避的资源耗尽信号。
+    matches!(error.raw_os_error(), Some(WSAEMFILE | WSAENOBUFS))
 }
 
 // 对于没有 Unix 或 Winsock 错误码的目标，保留之前的回退方案。
@@ -146,9 +150,14 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn detects_winsock_descriptor_limits_by_code() {
-        use windows_sys::Win32::Networking::WinSock::{WSAECONNREFUSED, WSAEMFILE};
+        use windows_sys::Win32::Networking::WinSock::{
+            WSAECONNREFUSED, WSAEMFILE, WSAENOBUFS,
+        };
         assert!(is_descriptor_exhaustion(&io::Error::from_raw_os_error(
             WSAEMFILE
+        )));
+        assert!(is_descriptor_exhaustion(&io::Error::from_raw_os_error(
+            WSAENOBUFS
         )));
         assert!(!is_descriptor_exhaustion(&io::Error::from_raw_os_error(
             WSAECONNREFUSED
