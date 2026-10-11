@@ -12,7 +12,7 @@ src/generated.rs
 
 
 #Added by cargo
-
+clash.toml
 /target
 
 # Created by https://www.toptal.com/developers/gitignore/api/rust,archlinuxpackages

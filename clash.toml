@@ -1,0 +1,4 @@
+# Clash Verge 外部控制器（External Controller）监听地址
+external-controller = "127.0.0.1:9090"
+# 外部控制器 API 访问密钥（RESTful API / zashboard 鉴权用）
+secret = "1212121"
