@@ -81,12 +81,35 @@ use text_placeholder::Template;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
+/// 内嵌的默认脚本内容，以 TOML 文本形式保存。
+///
+/// 它带有 `core_approved`、`RustScan`、`default` 三个标签，`call_format` 就是
+/// RustScan 从一开始就调用的那条 `nmap` 命令。用户不需要为它准备任何脚本文件
+/// 或配置文件，`--scripts default` 会直接在运行时把它解析成 [`ScriptFile`]。
 static DEFAULT: &str = r#"tags = ["core_approved", "RustScan", "default"]
 developer = [ "RustScan", "https://github.com/RustScan" ]
 ports_separator = ","
 call_format = "nmap -vvv -p {{port}} -{{ipversion}} {{ip}}"
 "#;
 
+/// 根据 `--scripts`（或配置文件里的 `scripts`）取值，返回本次扫描要运行的脚本列表。
+///
+/// 三种取值的行为分别是：
+///
+/// - [`ScriptsRequired::None`]：不运行任何脚本，返回空列表。它取代了已被移除的
+///   `--no-nmap` 选项。
+/// - [`ScriptsRequired::Default`]：只解析内嵌的 `DEFAULT` 脚本并返回它。
+/// - [`ScriptsRequired::Custom`]：先读取 `home_dir/.rustscan_scripts.toml`
+///   配置，再在配置指定的目录（未指定则回退到主目录）下找到所有脚本文件并解析
+///   成 [`ScriptFile`]，最后按标签筛出要运行的那些。
+///
+/// 标签筛选规则：只有当脚本自带的标签覆盖了配置文件里的全部标签时才被选中，
+/// 脚本可以再多带一些标签；不满足条件的脚本会留下 `debug` 日志后被跳过，没有
+/// 标签的脚本同样不会被选中。
+///
+/// # Errors
+///
+/// 当配置文件无法读取、脚本目录不存在，或者无法推断出主目录时返回错误。
 #[cfg(not(tarpaulin_include))]
 pub fn init_scripts(scripts: &ScriptsRequired) -> Result<Vec<ScriptFile>> {
     let mut scripts_to_run: Vec<ScriptFile> = Vec::new();
@@ -94,6 +117,7 @@ pub fn init_scripts(scripts: &ScriptsRequired) -> Result<Vec<ScriptFile>> {
     match scripts {
         ScriptsRequired::None => {}
         ScriptsRequired::Default => {
+            // 内嵌脚本必然合法，解析失败说明构建本身出了问题，因此直接 panic。
             let default_script =
                 toml::from_str::<ScriptFile>(DEFAULT).expect("Failed to parse Script file.");
             scripts_to_run.push(default_script);
@@ -140,6 +164,10 @@ pub fn init_scripts(scripts: &ScriptsRequired) -> Result<Vec<ScriptFile>> {
     Ok(scripts_to_run)
 }
 
+/// 把找到的脚本路径逐个解析成 [`ScriptFile`]。
+///
+/// 解析失败（文件读不了，或头部不是合法的 TOML 元数据）的脚本会被静默丢弃，
+/// 只留下 `debug` 日志，因此返回的数量可能少于传入的数量。
 pub fn parse_scripts(scripts: Vec<PathBuf>) -> Vec<ScriptFile> {
     let mut parsed_scripts: Vec<ScriptFile> = Vec::with_capacity(scripts.len());
     for script in scripts {
@@ -151,6 +179,10 @@ pub fn parse_scripts(scripts: Vec<PathBuf>) -> Vec<ScriptFile> {
     parsed_scripts
 }
 
+/// 一次具体的脚本调用，把脚本模板与本次扫描结果绑定在一起。
+///
+/// 与只描述“脚本长什么样”的 [`ScriptFile`] 不同，[`Script`] 还带着目标 `ip` 和
+/// 扫描出的 `open_ports`，可以直接展开成命令行并执行。
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct Script {
