@@ -242,6 +242,11 @@ pub struct Opts {
 
 #[cfg(not(tarpaulin_include))]
 impl Opts {
+    /// 从进程的命令行参数读取并解析选项。
+    ///
+    /// 解析失败时（例如参数格式错误）会打印 clap 生成的错误信息
+    /// 并直接结束进程，而不是返回 `Result`。需要可恢复的错误处理时
+    /// 请使用 [`Opts::try_read_from`]。
     pub fn read() -> Self {
         Self::try_read_from(std::env::args_os()).unwrap_or_else(|e| e.exit())
     }
@@ -306,6 +311,10 @@ impl Opts {
         }
     }
 
+    /// 合并配置文件中语义上"必填"的选项。
+    ///
+    /// 对每个字段：只要配置文件提供了值，且该选项没有在命令行上显式
+    /// 给出（不在 [`Opts::cli_args`] 中），就用配置值覆盖当前值。
     fn merge_required(&mut self, config: &Config) {
         macro_rules! merge_required {
             ($($field: ident),+) => {
@@ -325,6 +334,11 @@ impl Opts {
         );
     }
 
+    /// 合并配置文件中可选的选项。
+    ///
+    /// 仅当配置文件提供了值且命令行未显式给出该选项时才覆盖。此外还
+    /// 处理特殊情况：只有当用户通过 `--top` 请求时，才从配置文件采用
+    /// `ports`。
     fn merge_optional(&mut self, config: &Config) {
         macro_rules! merge_optional {
             ($($field: ident),+) => {
@@ -381,24 +395,43 @@ impl Default for Opts {
 #[cfg(not(tarpaulin_include))]
 #[derive(Debug, Deserialize)]
 pub struct Config {
+    /// 需要扫描的地址列表（CIDR、IP 或主机名）。
     addresses: Option<Vec<String>>,
+    /// 需要扫描的端口列表。
     ports: Option<Vec<u16>>,
+    /// 需要扫描的端口范围。
     range: Option<PortRanges>,
+    /// 是否启用可 grep 模式（只输出端口）。
     greppable: Option<bool>,
+    /// 是否启用无障碍模式（关闭影响屏幕阅读器的特性）。
     accessible: Option<bool>,
+    /// 端口扫描的批大小。
     batch_size: Option<usize>,
+    /// 判定端口关闭前的超时时间（毫秒）。
     timeout: Option<u32>,
+    /// 判定端口关闭前的重试次数。
     tries: Option<u8>,
+    /// 自动提升的 Unix 文件描述符上限。
     ulimit: Option<usize>,
+    /// 逗号分隔的 DNS 解析器列表。
     resolver: Option<String>,
+    /// 扫描顺序（串行或随机）。
     scan_order: Option<ScanOrder>,
+    /// 传给脚本（nmap）的尾部命令参数。
     command: Option<Vec<String>>,
+    /// 脚本运行级别。
     scripts: Option<ScriptsRequired>,
+    /// 需要从扫描中排除的端口列表。
     exclude_ports: Option<Vec<u16>>,
+    /// 需要从扫描中排除的地址列表。
     exclude_addresses: Option<Vec<String>>,
+    /// 是否启用 UDP 扫描模式。
     udp: Option<bool>,
+    /// 是否隐藏横幅。
     no_banner: Option<bool>,
+    /// 是否一并列出被关闭（主动拒绝）的 TCP 端口。
     closed: Option<bool>,
+    /// 每扫描完一个端口后的等待时间（毫秒）。
     interval: Option<u64>,
 }
 
