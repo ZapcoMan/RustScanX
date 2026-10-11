@@ -150,9 +150,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn detects_winsock_descriptor_limits_by_code() {
-        use windows_sys::Win32::Networking::WinSock::{
-            WSAECONNREFUSED, WSAEMFILE, WSAENOBUFS,
-        };
+        use windows_sys::Win32::Networking::WinSock::{WSAECONNREFUSED, WSAEMFILE, WSAENOBUFS};
         assert!(is_descriptor_exhaustion(&io::Error::from_raw_os_error(
             WSAEMFILE
         )));
