@@ -45,7 +45,7 @@ RustScanX 是一个用 Rust 编写的**端口扫描器**。它的设计目标是
 - **自适应批量大小**（Unix）：依据进程文件描述符限额（`ulimit`）自动下调批量，避免"打开文件数过多"导致扫描失败。
 - **脚本引擎**：按标签（tags）匹配脚本，把开放端口自动管道进 `nmap`，或运行任意语言的自定义脚本。
 - **稳健且可无障碍**：`-g/--greppable` 只输出 IP 与端口；`--accessible` 关闭对屏幕阅读器不友好的特性；所有输出经 `println_safe`，管道被提前关闭（`| head` 触发 `BrokenPipe`）时安静退出而非 panic。
-- **进度条模式**：`--progress` 扫描期间在 stderr 显示单行进度条（节流刷新），不再边扫边打印，扫描结束后再统一列出开放端口及其地址；`-g`/`--accessible` 下自动不渲染进度条。
+- **进度条输出（默认）**：CLI 正常模式下扫描期间在 stderr 显示单行进度条（节流刷新），不再边扫边打印 `Open ...`，扫描结束后再统一列出开放端口及其地址；无论快扫还是慢扫都是这一行为。`-g`（机器可读）与 `--accessible`（为读屏软件保留逐行输出）不显示进度条。
 
 ###  技术栈
 
@@ -119,11 +119,11 @@ RustScanX -a 127.0.0.1 -r 1-1024 --udp
 # 慢速、低噪声扫描：每扫完一个端口等待 250ms，并列出主动拒绝的关闭端口
 RustScanX -a 127.0.0.1 -r 1-1000 --interval 250 --closed
 
-# 扫描期间显示进度条，跑完后再统一列出开放端口（不再边扫边打印 Open ...）
-RustScanX -a 192.168.1.1 -r 1-10000 --progress
+# 默认行为：扫描期间显示进度条，跑完后统一列出开放端口（快扫/慢扫一致，无需额外开关）
+RustScanX -a 192.168.1.1 -r 1-10000
 
-# 进度条 + 慢扫 + 列出关闭端口，扫描结束后一次性给出完整结果
-RustScanX -a 10.0.0.5 -r 1-65535 --progress --interval 100 --closed
+# 慢扫同样走进度条，并在结束后列出开放与关闭端口
+RustScanX -a 10.0.0.5 -r 1-65535 --interval 100 --closed
 
 # 从文件读取目标地址（每行一个 IP / CIDR / 主机名）
 RustScanX -a ./targets.txt -r 1-1024
@@ -200,7 +200,6 @@ RustScan/
 | `--udp`                   | `false`                     | 启用 UDP 扫描                                                                                  |
 | `--closed`                | `false`                     | 额外列出主动拒绝（关闭）的 TCP 端口（不对它们运行脚本）                                        |
 | `--interval`              | `0`                         | 每扫完一个端口（在每个地址上）后等待的毫秒数，用于慢扫                                         |
-| `--progress`              | `false`                     | 扫描期间显示进度条而非边扫边打印；结束后统一列出开放端口（`-g`/`--accessible` 下不显示进度条） |
 | `-g, --greppable`         | `false`                     | 只输出 IP 与端口，便于管道/落盘                                                                |
 | `--accessible`            | `false`                     | 关闭对屏幕阅读器不友好的输出                                                                   |
 | `--resolver`              | —                           | 逗号分隔或文件形式的 DNS 解析器列表                                                            |
@@ -237,7 +236,6 @@ exclude_ports = [8080, 9090]
 udp = false
 closed = false
 interval = 0
-progress = false
 ```
 
 > `range` 会拒绝 `start > end`、空列表与非法 token；`--greppable` 与 `--scripts none` 会跳过脚本运行，只打印结果。
