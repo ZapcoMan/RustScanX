@@ -12,7 +12,7 @@ use RustScanX::{detail, funny_opening, output, warning};
 
 use colorful::{Color, Colorful};
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::string::ToString;
 use std::time::Duration;
 
@@ -104,6 +104,9 @@ fn main() {
     if opts.interval > 0 {
         scanner = scanner.with_interval(Duration::from_millis(opts.interval));
     }
+    if opts.progress && !opts.greppable && !opts.accessible {
+        scanner = scanner.with_progress();
+    }
     debug!("Scanner finished building: {scanner:?}");
 
     let mut portscan_bench = NamedTimer::start("Portscan");
@@ -136,6 +139,18 @@ fn main() {
     for ports in closed_ports_per_ip.values_mut() {
         ports.sort_unstable();
         ports.dedup();
+    }
+
+    // 进度条模式：扫描期间只显示进度条，跑完后再统一列出开放端口及其地址。
+    if opts.progress && !opts.greppable {
+        for ip in &ips {
+            if let Some(ports) = ports_per_ip.get(ip) {
+                for port in ports {
+                    let socket = SocketAddr::new(*ip, *port);
+                    println_safe(format_args!("Open {socket}"));
+                }
+            }
+        }
     }
 
     for ip in &ips {

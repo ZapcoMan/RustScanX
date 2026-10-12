@@ -28,6 +28,89 @@ pub fn println_safe(args: std::fmt::Arguments<'_>) {
     }
 }
 
+/// 扫描期间绘制在 stderr 上的单行进度条。
+///
+/// 结果不再边扫边打印到 stdout，而是等扫描跑完由调用方统一输出；
+/// 这个类型只负责把"扫到哪儿了"实时刷新到 stderr，并在结束时清除该行。
+pub struct ScanProgress {
+    total: u64,
+    done: u64,
+    enabled: bool,
+    width: usize,
+    last_render: std::time::Instant,
+    rendered: bool,
+}
+
+impl ScanProgress {
+    /// `total` 为需要完成的探测总数（地址数 × 端口数）；`enabled` 为 false 时
+    /// 所有方法都是空操作（greppable / accessible 模式下使用）。
+    pub fn new(total: u64, enabled: bool) -> Self {
+        Self {
+            total,
+            done: 0,
+            enabled,
+            width: 28,
+            last_render: std::time::Instant::now(),
+            rendered: false,
+        }
+    }
+
+    /// 记录一个套接字已完成，并按节流频率刷新进度条。
+    pub fn inc(&mut self) {
+        if !self.enabled {
+            return;
+        }
+        self.done = (self.done + 1).min(self.total);
+        // 限制重绘频率，避免每个端口都写一次终端拖慢扫描。
+        if self.done == self.total || self.last_render.elapsed().as_millis() >= 50 {
+            self.render();
+        }
+    }
+
+    fn render(&mut self) {
+        let fraction = if self.total > 0 {
+            self.done as f64 / self.total as f64
+        } else {
+            1.0
+        };
+        let filled = (fraction * self.width as f64) as usize;
+        let mut bar = String::with_capacity(self.width);
+        for i in 0..self.width {
+            if i < filled {
+                bar.push('=');
+            } else if i == filled {
+                bar.push('>');
+            } else {
+                bar.push(' ');
+            }
+        }
+
+        let mut stderr = std::io::stderr().lock();
+        let _ = write!(
+            stderr,
+            "\r  [{bar}] {:>3}%  {}/{}",
+            (fraction * 100.0) as u32,
+            self.done,
+            self.total
+        );
+        let _ = stderr.flush();
+
+        self.rendered = true;
+        self.last_render = std::time::Instant::now();
+    }
+
+    /// 扫描结束时清除进度条所在行，让后续结果从干净的一行开始。
+    pub fn finish(&mut self) {
+        if !self.enabled || !self.rendered {
+            return;
+        }
+        let mut stderr = std::io::stderr().lock();
+        let _ = write!(stderr, "\r\x1b[2K");
+        let _ = stderr.flush();
+        self.rendered = false;
+    }
+}
+
 /// RustScan 的终端用户界面（TUI）模块
 /// 定义要使用的宏
 #[macro_export]

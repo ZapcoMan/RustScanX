@@ -1,7 +1,7 @@
 //! 实际扫描行为的核心功能。
 use crate::generated::get_parsed_data;
 use crate::port_strategy::PortStrategy;
-use crate::tui::println_safe;
+use crate::tui::{println_safe, ScanProgress};
 use log::debug;
 
 mod socket_iterator;
@@ -113,6 +113,7 @@ pub struct Scanner {
     exclude_ports: Vec<u16>,
     udp: bool,
     print_open_ports: bool,
+    show_progress: bool,
     report_closed: bool,
     interval: Duration,
     /// 一旦操作系统报告套接字资源耗尽就置位；用于停止投递新套接字、
@@ -155,6 +156,7 @@ impl Scanner {
             exclude_ports,
             udp,
             print_open_ports: false,
+            show_progress: false,
             report_closed: false,
             interval: Duration::ZERO,
             exhausted: Arc::new(AtomicBool::new(false)),
@@ -167,6 +169,14 @@ impl Scanner {
     #[must_use]
     pub fn with_open_port_output(mut self) -> Self {
         self.print_open_ports = true;
+        self
+    }
+
+    /// 扫描期间显示进度条，并抑制边扫边打印的 "Open ..." 行；
+    /// 开放端口改由调用方在扫描结束后统一输出。
+    #[must_use]
+    pub fn with_progress(mut self) -> Self {
+        self.show_progress = true;
         self
     }
 
@@ -240,10 +250,19 @@ impl Scanner {
             (self.ips.len() * ports.len()),
             self.interval);
 
+        let total_sockets = (self.ips.len() * ports.len()) as u64;
+        let mut progress = ScanProgress::new(total_sockets, self.show_progress);
+
         if self.interval.is_zero() {
             let sockets = SocketIterator::new(&self.ips, &ports);
-            self.scan_sockets(sockets, &udp_payloads, &mut found_sockets, &mut errors)
-                .await;
+            self.scan_sockets(
+                sockets,
+                &udp_payloads,
+                &mut found_sockets,
+                &mut errors,
+                &mut progress,
+            )
+            .await;
         } else {
             // 每次只扫描一个端口（在每个地址上）并在
             // 转向下一个端口之前等待 `interval`。
@@ -252,13 +271,21 @@ impl Scanner {
                     sleep(self.interval).await;
                 }
                 let sockets = SocketIterator::new(&self.ips, std::slice::from_ref(port));
-                self.scan_sockets(sockets, &udp_payloads, &mut found_sockets, &mut errors)
-                    .await;
+                self.scan_sockets(
+                    sockets,
+                    &udp_payloads,
+                    &mut found_sockets,
+                    &mut errors,
+                    &mut progress,
+                )
+                .await;
                 if self.exhausted.load(Ordering::Relaxed) {
                     break;
                 }
             }
         }
+
+        progress.finish();
 
         if self.exhausted.load(Ordering::Relaxed) {
             log::warn!(
@@ -288,6 +315,7 @@ impl Scanner {
         udp_payloads: &Option<Arc<UdpPayloadLookup>>,
         found_sockets: &mut Vec<PortStatus>,
         errors: &mut ScanErrors,
+        progress: &mut ScanProgress,
     ) {
         let mut ftrs = FuturesUnordered::new();
 
@@ -306,7 +334,7 @@ impl Scanner {
                 // 不等待地轮询一次；这会启动新的套接字。
                 match poll_fn(|cx| Poll::Ready(ftrs.poll_next_unpin(cx))).await {
                     Poll::Ready(Some(result)) => {
-                        self.record(result, found_sockets, errors);
+                        self.record(result, found_sockets, errors, progress);
                         work += 1;
                     }
                     // 没有在途的，也没有剩下可启动的。
@@ -323,7 +351,7 @@ impl Scanner {
                 // 批次已满（或已完成），并且其中每个套接字都在
                 // 等待网络。
                 match ftrs.next().await {
-                    Some(result) => self.record(result, found_sockets, errors),
+                    Some(result) => self.record(result, found_sockets, errors, progress),
                     None => return,
                 }
             }
@@ -336,11 +364,13 @@ impl Scanner {
         result: io::Result<PortStatus>,
         found_sockets: &mut Vec<PortStatus>,
         errors: &mut ScanErrors,
+        progress: &mut ScanProgress,
     ) {
         match result {
             Ok(status) => found_sockets.push(status),
             Err(error) => errors.record(error),
         }
+        progress.inc();
     }
 
     /// 给定一个套接字，对它扫描 self.tries 次。
@@ -551,7 +581,7 @@ impl Scanner {
 
     /// 格式化并打印端口状态
     fn fmt_ports(&self, socket: SocketAddr) {
-        if self.print_open_ports && !self.greppable {
+        if self.print_open_ports && !self.greppable && !self.show_progress {
             if self.accessible {
                 println_safe(format_args!("Open {socket}"));
             } else {
@@ -562,7 +592,7 @@ impl Scanner {
 
     /// 打印一个关闭的端口（仅 CLI 输出，绝不以 greppable 模式输出）。
     fn fmt_closed_port(&self, socket: SocketAddr) {
-        if self.print_open_ports && !self.greppable {
+        if self.print_open_ports && !self.greppable && !self.show_progress {
             if self.accessible {
                 println_safe(format_args!("Closed {socket}"));
             } else {
