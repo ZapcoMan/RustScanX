@@ -45,6 +45,7 @@ RustScanX 是一个用 Rust 编写的**端口扫描器**。它的设计目标是
 - **自适应批量大小**（Unix）：依据进程文件描述符限额（`ulimit`）自动下调批量，避免"打开文件数过多"导致扫描失败。
 - **脚本引擎**：按标签（tags）匹配脚本，把开放端口自动管道进 `nmap`，或运行任意语言的自定义脚本。
 - **稳健且可无障碍**：`-g/--greppable` 只输出 IP 与端口；`--accessible` 关闭对屏幕阅读器不友好的特性；所有输出经 `println_safe`，管道被提前关闭（`| head` 触发 `BrokenPipe`）时安静退出而非 panic。
+- **进度条模式**：`--progress` 扫描期间在 stderr 显示单行进度条（节流刷新），不再边扫边打印，扫描结束后再统一列出开放端口及其地址；`-g`/`--accessible` 下自动不渲染进度条。
 
 ###  技术栈
 
@@ -118,6 +119,28 @@ RustScanX -a 127.0.0.1 -r 1-1024 --udp
 # 慢速、低噪声扫描：每扫完一个端口等待 250ms，并列出主动拒绝的关闭端口
 RustScanX -a 127.0.0.1 -r 1-1000 --interval 250 --closed
 
+# 扫描期间显示进度条，跑完后再统一列出开放端口（不再边扫边打印 Open ...）
+RustScanX -a 192.168.1.1 -r 1-10000 --progress
+
+# 进度条 + 慢扫 + 列出关闭端口，扫描结束后一次性给出完整结果
+RustScanX -a 10.0.0.5 -r 1-65535 --progress --interval 100 --closed
+
+# 从文件读取目标地址（每行一个 IP / CIDR / 主机名）
+RustScanX -a ./targets.txt -r 1-1024
+
+# 使用自定义 DNS 解析器
+RustScanX -a internal.host --resolver 1.1.1.1,8.8.8.8
+
+# 扫描 IPv6 目标
+RustScanX -a ::1 -p 22,80,443
+
+# Unix 上提高文件描述符限额以支撑更大并发
+RustScanX -a 192.168.1.0/24 -b 5000 --ulimit 6000
+
+# 指定配置文件 / 完全忽略配置文件
+RustScanX -C ./my-config.toml
+RustScanX -a 127.0.0.1 --no-config
+
 # 把 `--` 之后的参数透传给脚本引擎（默认会把结果管道进 nmap）
 RustScanX -t 1500 -a 127.0.0.1 -- -A -sC
 ```
@@ -140,7 +163,7 @@ RustScan/
 │   ├── lib.rs                    # 声明公开模块与输出宏，供库调用者复用
 │   ├── input.rs                  # Opts（clap）、Config（TOML）、PortRanges、ScanOrder/ScriptsRequired、合并逻辑
 │   ├── address.rs                # IP/IPv6/CIDR/主机名/文件解析、惰性 DNS、目标排除、去重
-│   ├── tui.rs                    # println_safe（BrokenPipe 安全）与 warning!/detail!/output!/funny_opening! 宏
+│   ├── tui.rs                    # println_safe（BrokenPipe 安全）、warning!/detail!/output!/funny_opening! 宏与 ScanProgress 进度条
 │   ├── port_strategy/
 │   │   ├── mod.rs                # PortStrategy：Manual / Serial / Random
 │   │   └── range_iterator.rs     # LCG 随机顺序 + 串行去重（65536 项 seen 表）
@@ -162,30 +185,31 @@ RustScan/
 
 ##  命令行参数参考
 
-| 参数                      | 默认                        | 含义                                                    |
-|:--------------------------|:----------------------------|:--------------------------------------------------------|
-| `-a, --addresses`         | —                           | 逗号分隔或文件形式的 CIDR/IP/主机列表                   |
-| `-p, --ports`             | —                           | 逗号分隔端口列表，如 `80,443,8080`（与 `-r` 互斥）      |
-| `-r, --range`             | 未给 `-p/-r` 时为 `1-65535` | `start-end` 逗号分隔范围，如 `1-500,1000-2500`          |
-| `-b, --batch-size`        | `4500`                      | 并发批量大小（在途连接上限）                            |
-| `-t, --timeout`           | `1500`                      | 判定端口关闭前的超时毫秒数                              |
-| `--tries`                 | `1`                         | 连接重试次数（为 0 时自动纠正为 1）                     |
-| `--scan-order`            | `serial`                    | `serial`（升序）或 `random`（LCG 随机）                 |
-| `--scripts`               | `default`                   | `none` / `default` / `custom`                           |
-| `--exclude-ports`         | —                           | 排除的端口列表（位图过滤）                              |
-| `-x, --exclude-addresses` | —                           | 排除的 CIDR/IP/主机列表                                 |
-| `--udp`                   | `false`                     | 启用 UDP 扫描                                           |
-| `--closed`                | `false`                     | 额外列出主动拒绝（关闭）的 TCP 端口（不对它们运行脚本） |
-| `--interval`              | `0`                         | 每扫完一个端口（在每个地址上）后等待的毫秒数，用于慢扫  |
-| `-g, --greppable`         | `false`                     | 只输出 IP 与端口，便于管道/落盘                         |
-| `--accessible`            | `false`                     | 关闭对屏幕阅读器不友好的输出                            |
-| `--resolver`              | —                           | 逗号分隔或文件形式的 DNS 解析器列表                     |
-| `-u, --ulimit`            | —                           | 自动提高 Unix 文件描述符限额（仅 Unix，Windows 会拒绝） |
-| `--top`                   | `false`                     | 使用配置文件中的 top ports                              |
-| `-n, --no-config`         | `false`                     | 忽略配置文件                                            |
-| `-C, --config-path`       | —                           | 指定配置文件路径                                        |
-| `--no-banner`             | `false`                     | 隐藏开场横幅                                            |
-| `-- <args>`               | —                           | 将 `--` 之后的参数透传给脚本（追加到 call_format 末尾） |
+| 参数                      | 默认                        | 含义                                                                                           |
+|:--------------------------|:----------------------------|:-----------------------------------------------------------------------------------------------|
+| `-a, --addresses`         | —                           | 逗号分隔或文件形式的 CIDR/IP/主机列表                                                          |
+| `-p, --ports`             | —                           | 逗号分隔端口列表，如 `80,443,8080`（与 `-r` 互斥）                                             |
+| `-r, --range`             | 未给 `-p/-r` 时为 `1-65535` | `start-end` 逗号分隔范围，如 `1-500,1000-2500`                                                 |
+| `-b, --batch-size`        | `4500`                      | 并发批量大小（在途连接上限）                                                                   |
+| `-t, --timeout`           | `1500`                      | 判定端口关闭前的超时毫秒数                                                                     |
+| `--tries`                 | `1`                         | 连接重试次数（为 0 时自动纠正为 1）                                                            |
+| `--scan-order`            | `serial`                    | `serial`（升序）或 `random`（LCG 随机）                                                        |
+| `--scripts`               | `default`                   | `none` / `default` / `custom`                                                                  |
+| `--exclude-ports`         | —                           | 排除的端口列表（位图过滤）                                                                     |
+| `-x, --exclude-addresses` | —                           | 排除的 CIDR/IP/主机列表                                                                        |
+| `--udp`                   | `false`                     | 启用 UDP 扫描                                                                                  |
+| `--closed`                | `false`                     | 额外列出主动拒绝（关闭）的 TCP 端口（不对它们运行脚本）                                        |
+| `--interval`              | `0`                         | 每扫完一个端口（在每个地址上）后等待的毫秒数，用于慢扫                                         |
+| `--progress`              | `false`                     | 扫描期间显示进度条而非边扫边打印；结束后统一列出开放端口（`-g`/`--accessible` 下不显示进度条） |
+| `-g, --greppable`         | `false`                     | 只输出 IP 与端口，便于管道/落盘                                                                |
+| `--accessible`            | `false`                     | 关闭对屏幕阅读器不友好的输出                                                                   |
+| `--resolver`              | —                           | 逗号分隔或文件形式的 DNS 解析器列表                                                            |
+| `-u, --ulimit`            | —                           | 自动提高 Unix 文件描述符限额（仅 Unix，Windows 会拒绝）                                        |
+| `--top`                   | `false`                     | 使用配置文件中的 top ports                                                                     |
+| `-n, --no-config`         | `false`                     | 忽略配置文件                                                                                   |
+| `-C, --config-path`       | —                           | 指定配置文件路径                                                                               |
+| `--no-banner`             | `false`                     | 隐藏开场横幅                                                                                   |
+| `-- <args>`               | —                           | 将 `--` 之后的参数透传给脚本（追加到 call_format 末尾）                                        |
 
 ---
 
@@ -213,6 +237,7 @@ exclude_ports = [8080, 9090]
 udp = false
 closed = false
 interval = 0
+progress = false
 ```
 
 > `range` 会拒绝 `start > end`、空列表与非法 token；`--greppable` 与 `--scripts none` 会跳过脚本运行，只打印结果。
