@@ -234,11 +234,6 @@ pub struct Opts {
     #[arg(long, default_value = "0", value_name = "MS")]
     pub interval: u64,
 
-    /// Show a progress bar while scanning instead of printing "Open <ip:port>"
-    /// live. Open ports (and their addresses) are printed once the scan finishes.
-    #[arg(long)]
-    pub progress: bool,
-
     /// 在命令行上显式给出的选项的 id。配置
     /// 文件永远不会覆盖这些选项（参见 [`Opts::merge`]）。
     #[arg(skip)]
@@ -335,7 +330,7 @@ impl Opts {
 
         merge_required!(
             addresses, greppable, accessible, batch_size, timeout, tries, scan_order, scripts,
-            command, udp, no_banner, closed, interval, progress
+            command, udp, no_banner, closed, interval
         );
     }
 
@@ -389,7 +384,6 @@ impl Default for Opts {
             udp: false,
             closed: false,
             interval: 0,
-            progress: false,
             cli_args: HashSet::new(),
         }
     }
@@ -439,8 +433,6 @@ pub struct Config {
     closed: Option<bool>,
     /// 每扫描完一个端口后的等待时间（毫秒）。
     interval: Option<u64>,
-    /// 是否在扫描期间显示进度条、扫描结束后再统一输出开放端口。
-    progress: Option<bool>,
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -560,7 +552,6 @@ mod tests {
                 no_banner: None,
                 closed: Some(false),
                 interval: None,
-                progress: None,
             }
         }
     }

@@ -104,9 +104,6 @@ fn main() {
     if opts.interval > 0 {
         scanner = scanner.with_interval(Duration::from_millis(opts.interval));
     }
-    if opts.progress && !opts.greppable && !opts.accessible {
-        scanner = scanner.with_progress();
-    }
     debug!("Scanner finished building: {scanner:?}");
 
     let mut portscan_bench = NamedTimer::start("Portscan");
@@ -141,8 +138,9 @@ fn main() {
         ports.dedup();
     }
 
-    // 进度条模式：扫描期间只显示进度条，跑完后再统一列出开放端口及其地址。
-    if opts.progress && !opts.greppable {
+    // 进度条模式（CLI 正常模式）：扫描期间只显示进度条，跑完后统一列出开放端口及其地址。
+    // （greppable 走下面的 `{ip} -> [ports]`；accessible 已在扫描时逐行输出。）
+    if !opts.greppable && !opts.accessible {
         for ip in &ips {
             if let Some(ports) = ports_per_ip.get(ip) {
                 for port in ports {

@@ -113,7 +113,6 @@ pub struct Scanner {
     exclude_ports: Vec<u16>,
     udp: bool,
     print_open_ports: bool,
-    show_progress: bool,
     report_closed: bool,
     interval: Duration,
     /// 一旦操作系统报告套接字资源耗尽就置位；用于停止投递新套接字、
@@ -156,14 +155,14 @@ impl Scanner {
             exclude_ports,
             udp,
             print_open_ports: false,
-            show_progress: false,
             report_closed: false,
             interval: Duration::ZERO,
             exhausted: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    /// 启用 CLI 的增量式开放端口输出。
+    /// 启用 CLI 的开放端口输出：正常模式下扫描期间显示进度条、扫完后
+    /// 统一输出结果（见 [`Self::shows_progress`]）；无障碍模式下保留逐行输出。
     ///
     /// 库调用者默认是安静的，并且可以检查 [`Self::run`] 返回的套接字。
     #[must_use]
@@ -172,12 +171,13 @@ impl Scanner {
         self
     }
 
-    /// 扫描期间显示进度条，并抑制边扫边打印的 "Open ..." 行；
-    /// 开放端口改由调用方在扫描结束后统一输出。
-    #[must_use]
-    pub fn with_progress(mut self) -> Self {
-        self.show_progress = true;
-        self
+    /// 是否在扫描期间用进度条取代边扫边打印的 "Open ..." 行。
+    ///
+    /// 这是 CLI 正常模式（启用开放端口输出、非 greppable、非 accessible）的
+    /// 默认行为；greppable 走机器可读输出、accessible 为读屏软件保留逐行输出，
+    /// 两者都不显示进度条。
+    fn shows_progress(&self) -> bool {
+        self.print_open_ports && !self.greppable && !self.accessible
     }
 
     /// 也报告主动拒绝连接的 TCP 端口，作为 [`Self::run_with_status`]
@@ -251,7 +251,7 @@ impl Scanner {
             self.interval);
 
         let total_sockets = (self.ips.len() * ports.len()) as u64;
-        let mut progress = ScanProgress::new(total_sockets, self.show_progress);
+        let mut progress = ScanProgress::new(total_sockets, self.shows_progress());
 
         if self.interval.is_zero() {
             let sockets = SocketIterator::new(&self.ips, &ports);
@@ -581,7 +581,7 @@ impl Scanner {
 
     /// 格式化并打印端口状态
     fn fmt_ports(&self, socket: SocketAddr) {
-        if self.print_open_ports && !self.greppable && !self.show_progress {
+        if self.print_open_ports && !self.greppable && !self.shows_progress() {
             if self.accessible {
                 println_safe(format_args!("Open {socket}"));
             } else {
@@ -592,7 +592,7 @@ impl Scanner {
 
     /// 打印一个关闭的端口（仅 CLI 输出，绝不以 greppable 模式输出）。
     fn fmt_closed_port(&self, socket: SocketAddr) {
-        if self.print_open_ports && !self.greppable && !self.show_progress {
+        if self.print_open_ports && !self.greppable && !self.shows_progress() {
             if self.accessible {
                 println_safe(format_args!("Closed {socket}"));
             } else {
